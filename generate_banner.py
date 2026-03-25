@@ -11,7 +11,7 @@ import numpy as np
 from collections import Counter
 from fontTools.ttLib import TTFont
 from fontTools.pens.recordingPen import RecordingPen
-from shapely.geometry import Polygon, MultiPolygon, Point, box
+from shapely.geometry import Polygon, MultiPolygon, Point, box, LineString
 from shapely.affinity import scale as shapely_scale, translate
 import trimesh
 
@@ -20,10 +20,10 @@ OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "STL")
 TARGET_HEIGHT_MM = 200.0
 DEPTH_MM = 1.0
 HOLE_DIAMETER_MM = 5.0
-HOLE_INSET_MM = 8.0
 HOLE_CIRCLE_RES = 32
 TEXT = "HAPPY BIRTHDAY"
 PAD_RADIUS_MM = 7.0
+MIN_EDGE_CLEARANCE_MM = 2.0  # minimum material between hole edge and letter edge
 # Tab dimensions
 TAB_WIDTH_MM = 14.0
 TAB_HEIGHT_MM = 15.0
@@ -147,31 +147,80 @@ def make_rounded_tab(cx, top_y, width, height, corner_radius):
     right = cx + half_w
     bottom = top_y
     top = top_y + height
-    # Create rectangle and round the top corners
     tab = box(left, bottom, right, top)
     tab = tab.buffer(corner_radius, join_style=1).buffer(-corner_radius, join_style=1)
     return tab
 
 
-def add_holes_to_letter(polygon, bounds_width, bounds_height, min_y):
+def find_hole_positions(polygon):
+    """Find two good positions for holes near the top of a letter.
+    Scans from top downward to find Y levels where the letter is wide enough
+    to fit two holes with proper clearance from all edges."""
     hole_radius = HOLE_DIAMETER_MM / 2.0
-    hole_y = min_y + bounds_height - HOLE_INSET_MM
-    left_x_ratio = 0.15
-    right_x_ratio = 0.85
+    required_clearance = hole_radius + MIN_EDGE_CLEARANCE_MM
     minx, miny, maxx, maxy = polygon.bounds
-    width = maxx - minx
-    left_cx = minx + width * left_x_ratio
-    right_cx = minx + width * right_x_ratio
-    for attempt_y in [hole_y, min_y + bounds_height - HOLE_INSET_MM * 1.5,
-                      min_y + bounds_height - HOLE_INSET_MM * 2]:
-        left_pt = Point(left_cx, attempt_y)
-        right_pt = Point(right_cx, attempt_y)
-        if polygon.contains(left_pt) and polygon.contains(right_pt):
-            hole_y = attempt_y
-            break
+    height = maxy - miny
+    # Erode the polygon by the required clearance so any point inside
+    # the eroded shape is guaranteed to have enough material around a hole
+    eroded = polygon.buffer(-required_clearance)
+    if eroded.is_empty:
+        # Letter is too thin everywhere, use pad reinforcement fallback
+        eroded = polygon.buffer(-hole_radius)
+    if eroded.is_empty:
+        return None
+    # Scan Y levels from top down (upper 40% of letter)
+    for y_frac in np.linspace(0.95, 0.60, 30):
+        scan_y = miny + height * y_frac
+        # Intersect a horizontal line with the eroded polygon
+        scan_line = LineString([(minx - 1, scan_y), (maxx + 1, scan_y)])
+        intersection = eroded.intersection(scan_line)
+        if intersection.is_empty:
+            continue
+        # Get all line segments at this Y level
+        if intersection.geom_type == 'MultiLineString':
+            segments = list(intersection.geoms)
+        elif intersection.geom_type == 'LineString':
+            segments = [intersection]
+        else:
+            continue
+        # Find the widest segment or combination
+        all_x = []
+        for seg in segments:
+            coords = list(seg.coords)
+            xs = [c[0] for c in coords]
+            all_x.extend(xs)
+        if len(all_x) < 2:
+            continue
+        x_min_avail = min(all_x)
+        x_max_avail = max(all_x)
+        span = x_max_avail - x_min_avail
+        # Need enough room for two holes with spacing between them
+        min_span = HOLE_DIAMETER_MM * 4
+        if span < min_span:
+            continue
+        # Place holes at 20% and 80% of available span
+        left_cx = x_min_avail + span * 0.2
+        right_cx = x_min_avail + span * 0.8
+        # Verify both points are inside the eroded polygon
+        if eroded.contains(Point(left_cx, scan_y)) and eroded.contains(Point(right_cx, scan_y)):
+            return (left_cx, right_cx, scan_y)
+    return None
+
+
+def add_holes_to_letter(polygon):
+    """Add two holes near the top of the letter for stringing.
+    Uses geometry-aware placement to ensure holes are inside the letter."""
+    hole_radius = HOLE_DIAMETER_MM / 2.0
+    positions = find_hole_positions(polygon)
+    if positions is None:
+        print('    WARNING: Could not find valid hole positions')
+        return polygon
+    left_cx, right_cx, hole_y = positions
+    # Add reinforcement pads around hole locations
     left_pad = make_circle(left_cx, hole_y, PAD_RADIUS_MM)
     right_pad = make_circle(right_cx, hole_y, PAD_RADIUS_MM)
     polygon = polygon.union(left_pad).union(right_pad)
+    # Punch holes
     left_hole = make_circle(left_cx, hole_y, hole_radius)
     right_hole = make_circle(right_cx, hole_y, hole_radius)
     result = polygon.difference(left_hole).difference(right_hole)
@@ -179,18 +228,26 @@ def add_holes_to_letter(polygon, bounds_width, bounds_height, min_y):
 
 
 def add_tabs_to_letter(polygon):
-    """Add rounded tabs with holes extending above the letter."""
+    """Add rounded tabs with holes extending above the letter.
+    Tabs are placed at 20%/80% of the letter bounding box width.
+    Each tab extends from 10mm below the letter top to 15mm above it,
+    ensuring a solid overlap connection even on narrow-topped letters."""
     hole_radius = HOLE_DIAMETER_MM / 2.0
     minx, miny, maxx, maxy = polygon.bounds
     width = maxx - minx
-    left_cx = minx + width * 0.15
-    right_cx = minx + width * 0.85
-    # Create tabs extending above the letter top
-    left_tab = make_rounded_tab(left_cx, maxy, TAB_WIDTH_MM, TAB_HEIGHT_MM, TAB_CORNER_RADIUS_MM)
-    right_tab = make_rounded_tab(right_cx, maxy, TAB_WIDTH_MM, TAB_HEIGHT_MM, TAB_CORNER_RADIUS_MM)
-    # Union tabs with letter
+    # Place tabs at 20% and 80% of overall letter width
+    left_cx = minx + width * 0.20
+    right_cx = minx + width * 0.80
+    # Tab extends from 10mm below top to 15mm above top
+    tab_overlap = 10.0
+    tab_bottom = maxy - tab_overlap
+    tab_top = maxy + TAB_HEIGHT_MM
+    tab_full_height = tab_top - tab_bottom
+    # Create tabs as rounded rectangles
+    left_tab = make_rounded_tab(left_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM)
+    right_tab = make_rounded_tab(right_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM)
     polygon = polygon.union(left_tab).union(right_tab)
-    # Punch holes in the tabs (centered in the tab area)
+    # Punch holes centered in the portion above the letter
     hole_y = maxy + TAB_HEIGHT_MM / 2.0
     left_hole = make_circle(left_cx, hole_y, hole_radius)
     right_hole = make_circle(right_cx, hole_y, hole_radius)
@@ -246,11 +303,8 @@ def process_character(char, style, output_dir):
     polygon = get_scaled_polygon(char)
     if polygon is None:
         return None
-    minx, miny, maxx, maxy = polygon.bounds
-    scaled_width = maxx - minx
-    scaled_height = maxy - miny
     if style == "holes":
-        polygon = add_holes_to_letter(polygon, scaled_width, scaled_height, miny)
+        polygon = add_holes_to_letter(polygon)
     else:
         polygon = add_tabs_to_letter(polygon)
     polygon = polygon.buffer(0)
