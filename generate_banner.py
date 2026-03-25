@@ -1,5 +1,6 @@
 """
 Generate 3D-printable HAPPY BIRTHDAY banner letters as STL files.
+Two styles: holes-in-letter and tabs-on-top.
 Each unique letter is 200mm tall, 1.0mm deep, with holes for stringing on ribbon.
 Font: Waltograph UI
 Target printer: Flashforge AD5X
@@ -10,7 +11,7 @@ import numpy as np
 from collections import Counter
 from fontTools.ttLib import TTFont
 from fontTools.pens.recordingPen import RecordingPen
-from shapely.geometry import Polygon, MultiPolygon, Point
+from shapely.geometry import Polygon, MultiPolygon, Point, box
 from shapely.affinity import scale as shapely_scale, translate
 import trimesh
 
@@ -23,6 +24,10 @@ HOLE_INSET_MM = 8.0
 HOLE_CIRCLE_RES = 32
 TEXT = "HAPPY BIRTHDAY"
 PAD_RADIUS_MM = 7.0
+# Tab dimensions
+TAB_WIDTH_MM = 14.0
+TAB_HEIGHT_MM = 15.0
+TAB_CORNER_RADIUS_MM = 3.0
 
 
 def get_glyph_outline(font_path, char):
@@ -135,6 +140,19 @@ def make_circle(cx, cy, radius, n_segments=HOLE_CIRCLE_RES):
     return Polygon(coords)
 
 
+def make_rounded_tab(cx, top_y, width, height, corner_radius):
+    """Create a rounded rectangle tab extending upward from top_y."""
+    half_w = width / 2.0
+    left = cx - half_w
+    right = cx + half_w
+    bottom = top_y
+    top = top_y + height
+    # Create rectangle and round the top corners
+    tab = box(left, bottom, right, top)
+    tab = tab.buffer(corner_radius, join_style=1).buffer(-corner_radius, join_style=1)
+    return tab
+
+
 def add_holes_to_letter(polygon, bounds_width, bounds_height, min_y):
     hole_radius = HOLE_DIAMETER_MM / 2.0
     hole_y = min_y + bounds_height - HOLE_INSET_MM
@@ -154,6 +172,26 @@ def add_holes_to_letter(polygon, bounds_width, bounds_height, min_y):
     left_pad = make_circle(left_cx, hole_y, PAD_RADIUS_MM)
     right_pad = make_circle(right_cx, hole_y, PAD_RADIUS_MM)
     polygon = polygon.union(left_pad).union(right_pad)
+    left_hole = make_circle(left_cx, hole_y, hole_radius)
+    right_hole = make_circle(right_cx, hole_y, hole_radius)
+    result = polygon.difference(left_hole).difference(right_hole)
+    return result
+
+
+def add_tabs_to_letter(polygon):
+    """Add rounded tabs with holes extending above the letter."""
+    hole_radius = HOLE_DIAMETER_MM / 2.0
+    minx, miny, maxx, maxy = polygon.bounds
+    width = maxx - minx
+    left_cx = minx + width * 0.15
+    right_cx = minx + width * 0.85
+    # Create tabs extending above the letter top
+    left_tab = make_rounded_tab(left_cx, maxy, TAB_WIDTH_MM, TAB_HEIGHT_MM, TAB_CORNER_RADIUS_MM)
+    right_tab = make_rounded_tab(right_cx, maxy, TAB_WIDTH_MM, TAB_HEIGHT_MM, TAB_CORNER_RADIUS_MM)
+    # Union tabs with letter
+    polygon = polygon.union(left_tab).union(right_tab)
+    # Punch holes in the tabs (centered in the tab area)
+    hole_y = maxy + TAB_HEIGHT_MM / 2.0
     left_hole = make_circle(left_cx, hole_y, hole_radius)
     right_hole = make_circle(right_cx, hole_y, hole_radius)
     result = polygon.difference(left_hole).difference(right_hole)
@@ -185,8 +223,8 @@ def polygon_to_stl(polygon, depth, filename):
     return True
 
 
-def process_character(char):
-    print(f"Processing '{char}'...")
+def get_scaled_polygon(char):
+    """Get the scaled letter polygon (200mm tall) without any holes or tabs."""
     contours = get_glyph_outline(FONT_PATH, char)
     if not contours:
         return None
@@ -200,43 +238,71 @@ def process_character(char):
     scale = TARGET_HEIGHT_MM / current_height
     polygon = translate(polygon, xoff=-minx, yoff=-miny)
     polygon = shapely_scale(polygon, xfact=scale, yfact=scale, origin=(0, 0))
+    return polygon
+
+
+def process_character(char, style, output_dir):
+    """Process a character with the given style ("holes" or "tabs")."""
+    polygon = get_scaled_polygon(char)
+    if polygon is None:
+        return None
     minx, miny, maxx, maxy = polygon.bounds
     scaled_width = maxx - minx
     scaled_height = maxy - miny
-    print(f"  Size: {scaled_width:.1f} x {scaled_height:.1f} mm")
-    polygon = add_holes_to_letter(polygon, scaled_width, scaled_height, miny)
+    if style == "holes":
+        polygon = add_holes_to_letter(polygon, scaled_width, scaled_height, miny)
+    else:
+        polygon = add_tabs_to_letter(polygon)
     polygon = polygon.buffer(0)
     if polygon.is_empty:
         return None
-    filename = os.path.join(OUTPUT_DIR, f"{char}_banner.stl")
+    filename = os.path.join(output_dir, f"{char}_banner.stl")
     success = polygon_to_stl(polygon, DEPTH_MM, filename)
     if success:
         final_bounds = polygon.bounds
         w = final_bounds[2] - final_bounds[0]
         h = final_bounds[3] - final_bounds[1]
-        print(f"  Saved: {filename}")
-        print(f"  Final size: {w:.1f} x {h:.1f} x {DEPTH_MM} mm")
+        print(f"  {char}: {w:.1f} x {h:.1f} x {DEPTH_MM} mm -> {filename}")
         return filename
     return None
 
 
 def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    print("Generating HAPPY BIRTHDAY banner")
+    holes_dir = os.path.join(OUTPUT_DIR, "holes")
+    tabs_dir = os.path.join(OUTPUT_DIR, "tabs")
+    os.makedirs(holes_dir, exist_ok=True)
+    os.makedirs(tabs_dir, exist_ok=True)
+
+    print("Generating HAPPY BIRTHDAY banner - two styles")
     print(f"Font: Waltograph UI ({FONT_PATH})")
     print(f"Height: {TARGET_HEIGHT_MM}mm, Depth: {DEPTH_MM}mm")
     print(f"Hole diameter: {HOLE_DIAMETER_MM}mm for string/ribbon")
     print(f"Output: {OUTPUT_DIR}")
-    print("-" * 50)
+    print("-" * 60)
+
     unique_chars = sorted(set(TEXT.replace(" ", "")))
     counts = Counter(TEXT.replace(" ", ""))
-    generated = []
+
+    print("\nStyle 1: Holes in letter body")
+    print("-" * 40)
+    holes_generated = []
     for char in unique_chars:
-        result = process_character(char)
+        result = process_character(char, "holes", holes_dir)
         if result:
-            generated.append((char, result))
-    print("-" * 50)
-    print(f"Generated {len(generated)} unique letter STL files in {OUTPUT_DIR}")
+            holes_generated.append(char)
+
+    print("\nStyle 2: Tabs on top with holes")
+    print("-" * 40)
+    tabs_generated = []
+    for char in unique_chars:
+        result = process_character(char, "tabs", tabs_dir)
+        if result:
+            tabs_generated.append(char)
+
+    print("\n" + "=" * 60)
+    print(f"Generated {len(holes_generated)} letters x 2 styles in {OUTPUT_DIR}")
+    print(f"  STL/holes/ - holes punched directly in the letter")
+    print(f"  STL/tabs/  - rounded tabs extending above the letter")
     print("\nPrint quantities for HAPPY BIRTHDAY:")
     for char in unique_chars:
         qty = counts[char]
@@ -246,7 +312,7 @@ def main():
     print("  - Layer height: 0.2mm (5 layers total)")
     print("  - No supports needed (flat letters)")
     print("  - Infill: 100% (only 1mm thick)")
-    print("  - Thread ribbon/string through the holes at the top of each letter")
+    print("  - Thread ribbon/string through the holes")
 
 
 if __name__ == "__main__":
