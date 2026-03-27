@@ -28,6 +28,8 @@ MIN_EDGE_CLEARANCE_MM = 2.0  # minimum material between hole edge and letter edg
 TAB_WIDTH_MM = 14.0
 TAB_HEIGHT_MM = 15.0
 TAB_CORNER_RADIUS_MM = 3.0
+FIXED_HOLE_Y_MM = 185.0  # All letters use same Y so banner hangs level
+FIXED_HOLE_Y_MM = 185.0  # All letters use same Y so banner hangs level
 
 
 def get_glyph_outline(font_path, char):
@@ -153,61 +155,59 @@ def make_rounded_tab(cx, top_y, width, height, corner_radius):
 
 
 def find_hole_positions(polygon):
-    """Find two good positions for holes near the top of a letter.
-    Scans from top downward. If the letter has two truly separate strokes
-    at the top (like H), places one hole centered in each stroke.
-    Uses the raw (un-eroded) polygon to detect real gaps vs. thin spots."""
+    """Find two hole positions at the fixed Y height (FIXED_HOLE_Y_MM) so all
+    letters hang at the same level. For multi-stroke letters like H, places
+    one hole centered in each stroke. For single-stroke letters, places holes
+    at 20%/80% of the available span."""
     hole_radius = HOLE_DIAMETER_MM / 2.0
     required_clearance = hole_radius + MIN_EDGE_CLEARANCE_MM
     minx, miny, maxx, maxy = polygon.bounds
-    height = maxy - miny
     eroded = polygon.buffer(-required_clearance)
     if eroded.is_empty:
         eroded = polygon.buffer(-hole_radius)
     if eroded.is_empty:
         return None
-    y_levels = np.linspace(0.95, 0.60, 30)
-    # Pass 1: look for Y levels where the RAW polygon has 2+ separate
-    # strokes (true gaps in the letter shape, like H)
-    for y_frac in y_levels:
-        scan_y = miny + height * y_frac
-        scan_line = LineString([(minx - 1, scan_y), (maxx + 1, scan_y)])
-        # Check raw polygon for true gaps
-        raw_intersection = polygon.intersection(scan_line)
-        if raw_intersection.is_empty:
-            continue
+    scan_y = FIXED_HOLE_Y_MM
+    scan_line = LineString([(minx - 1, scan_y), (maxx + 1, scan_y)])
+    # Check raw polygon for true multi-stroke gaps (like H)
+    raw_intersection = polygon.intersection(scan_line)
+    has_real_gap = False
+    if not raw_intersection.is_empty:
         if raw_intersection.geom_type == 'MultiLineString':
             raw_segs = list(raw_intersection.geoms)
         elif raw_intersection.geom_type == 'LineString':
             raw_segs = [raw_intersection]
         else:
-            continue
-        # Only consider multi-stroke if the raw polygon has 2+ segments
-        # with a real gap between them (not just thin decorative splits)
+            raw_segs = []
         raw_ranges = []
         for seg in raw_segs:
             xs = [c[0] for c in seg.coords]
-            raw_ranges.append((min(xs), max(xs)))
+            seg_width = max(xs) - min(xs)
+            raw_ranges.append((min(xs), max(xs), seg_width))
         raw_ranges.sort()
-        has_real_gap = False
         if len(raw_ranges) >= 2:
             for i in range(len(raw_ranges) - 1):
                 gap = raw_ranges[i + 1][0] - raw_ranges[i][1]
-                if gap > HOLE_DIAMETER_MM * 2:
+                # Only count as real multi-stroke if both sides of the gap
+                # are wide enough for a hole (not just a decorative thin element)
+                min_stroke_width = HOLE_DIAMETER_MM * 2
+                if (gap > HOLE_DIAMETER_MM * 2
+                        and raw_ranges[i][2] >= min_stroke_width
+                        and raw_ranges[i + 1][2] >= min_stroke_width):
                     has_real_gap = True
                     break
-        if not has_real_gap:
-            continue
-        # Raw polygon has a real gap - now check eroded for valid positions
-        er_intersection = eroded.intersection(scan_line)
-        if er_intersection.is_empty:
-            continue
-        if er_intersection.geom_type == 'MultiLineString':
-            er_segs = list(er_intersection.geoms)
-        elif er_intersection.geom_type == 'LineString':
-            er_segs = [er_intersection]
-        else:
-            continue
+    # Check eroded polygon at fixed Y
+    er_intersection = eroded.intersection(scan_line)
+    if er_intersection.is_empty:
+        return None
+    if er_intersection.geom_type == 'MultiLineString':
+        er_segs = list(er_intersection.geoms)
+    elif er_intersection.geom_type == 'LineString':
+        er_segs = [er_intersection]
+    else:
+        return None
+    # Multi-stroke: one hole per stroke
+    if has_real_gap:
         seg_ranges = []
         for seg in er_segs:
             xs = [c[0] for c in seg.coords]
@@ -224,36 +224,24 @@ def find_hole_positions(polygon):
             right_cx = (s2[0] + s2[1]) / 2.0
             if eroded.contains(Point(left_cx, scan_y)) and eroded.contains(Point(right_cx, scan_y)):
                 return (left_cx, right_cx, scan_y)
-    # Pass 2: single stroke with two holes inside it
-    for y_frac in y_levels:
-        scan_y = miny + height * y_frac
-        scan_line = LineString([(minx - 1, scan_y), (maxx + 1, scan_y)])
-        intersection = eroded.intersection(scan_line)
-        if intersection.is_empty:
-            continue
-        if intersection.geom_type == 'MultiLineString':
-            segments = list(intersection.geoms)
-        elif intersection.geom_type == 'LineString':
-            segments = [intersection]
-        else:
-            continue
-        # Collect all x values across all eroded segments at this level
-        all_x = []
-        for seg in segments:
-            xs = [c[0] for c in seg.coords]
-            all_x.extend(xs)
-        if len(all_x) < 2:
-            continue
-        x_min_avail = min(all_x)
-        x_max_avail = max(all_x)
-        span = x_max_avail - x_min_avail
-        if span < HOLE_DIAMETER_MM * 4:
-            continue
-        left_cx = x_min_avail + span * 0.2
-        right_cx = x_min_avail + span * 0.8
-        if eroded.contains(Point(left_cx, scan_y)) and eroded.contains(Point(right_cx, scan_y)):
-            return (left_cx, right_cx, scan_y)
+    # Single stroke: place both holes in the widest eroded segment
+    best_seg = None
+    best_span = 0
+    for seg in er_segs:
+        xs = [c[0] for c in seg.coords]
+        seg_min, seg_max = min(xs), max(xs)
+        seg_span = seg_max - seg_min
+        if seg_span > best_span:
+            best_span = seg_span
+            best_seg = (seg_min, seg_max)
+    if best_seg is None or best_span < HOLE_DIAMETER_MM * 4:
+        return None
+    left_cx = best_seg[0] + best_span * 0.2
+    right_cx = best_seg[0] + best_span * 0.8
+    if eroded.contains(Point(left_cx, scan_y)) and eroded.contains(Point(right_cx, scan_y)):
+        return (left_cx, right_cx, scan_y)
     return None
+
 
 def add_holes_to_letter(polygon):
     """Add two holes near the top of the letter for stringing.
