@@ -263,23 +263,48 @@ def main():
 
     print(f"  Holes at x={left_cx:.1f}, x={right_cx:.1f}, y={hole_y:.1f}")
 
-    # Build castle with holes (single version for both folders)
-    castle = Polygon(polygon.exterior.coords, [r.coords for r in polygon.interiors]) if polygon.geom_type == 'Polygon' else polygon
-    # Add reinforcement pads
+    base_poly = Polygon(polygon.exterior.coords, [r.coords for r in polygon.interiors]) if polygon.geom_type == 'Polygon' else polygon
+
+    # === Holes version ===
+    print("\nGenerating holes version...")
+    holes_castle = base_poly.buffer(0)
     left_pad = make_circle(left_cx, hole_y, PAD_RADIUS_MM)
     right_pad = make_circle(right_cx, hole_y, PAD_RADIUS_MM)
-    castle = castle.union(left_pad).union(right_pad)
-    # Punch holes
-    castle = castle.difference(make_circle(left_cx, hole_y, hole_radius))
-    castle = castle.difference(make_circle(right_cx, hole_y, hole_radius))
-    castle = castle.buffer(0)
+    holes_castle = holes_castle.union(left_pad).union(right_pad)
+    holes_castle = holes_castle.difference(make_circle(left_cx, hole_y, hole_radius))
+    holes_castle = holes_castle.difference(make_circle(right_cx, hole_y, hole_radius))
+    holes_castle = holes_castle.buffer(0)
 
-    # Save to both holes and tabs folders (same file, no tabs on castle)
-    for style in ["holes", "tabs"]:
-        out_path = os.path.join(REPO_DIR, "STL", style, "castle_banner.stl")
-        if polygon_to_stl(castle, DEPTH_MM, out_path):
-            b = castle.bounds
-            print(f"  {style}: {b[2]-b[0]:.1f} x {b[3]-b[1]:.1f} x {DEPTH_MM} mm")
+    holes_path = os.path.join(REPO_DIR, "STL", "holes", "castle_banner.stl")
+    if polygon_to_stl(holes_castle, DEPTH_MM, holes_path):
+        b = holes_castle.bounds
+        print(f"  holes: {b[2]-b[0]:.1f} x {b[3]-b[1]:.1f} x {DEPTH_MM} mm")
+
+    # === Tabs version ===
+    # Tabs extend from each flag/spire tip upward to the same height
+    print("\nGenerating tabs version...")
+    tabs_castle = base_poly.buffer(0)
+    left_top = best_left[1] if best_left else maxy * 0.85
+    right_top = best_right[1] if best_right else maxy * 0.95
+    # Both tabs reach the same Y above the castle
+    tab_target_y = max(left_top, right_top) + TAB_HEIGHT_MM
+    left_tab_height = tab_target_y - (left_top - 10.0)  # 10mm overlap into spire
+    right_tab_height = tab_target_y - (right_top - 10.0)
+    castle_tab_width = 8.0
+    left_tab = make_rounded_tab(left_cx, left_top - 10.0, castle_tab_width, left_tab_height, TAB_CORNER_RADIUS_MM)
+    right_tab = make_rounded_tab(right_cx, right_top - 10.0, castle_tab_width, right_tab_height, TAB_CORNER_RADIUS_MM)
+    tabs_castle = tabs_castle.union(left_tab).union(right_tab)
+    # Holes at the top of each tab (same Y for level hanging)
+    tab_hole_y = tab_target_y - TAB_HEIGHT_MM / 2.0
+    tabs_castle = tabs_castle.difference(make_circle(left_cx, tab_hole_y, hole_radius))
+    tabs_castle = tabs_castle.difference(make_circle(right_cx, tab_hole_y, hole_radius))
+    tabs_castle = tabs_castle.buffer(0)
+
+    tabs_path = os.path.join(REPO_DIR, "STL", "tabs", "castle_banner.stl")
+    if polygon_to_stl(tabs_castle, DEPTH_MM, tabs_path):
+        b = tabs_castle.bounds
+        print(f"  tabs: {b[2]-b[0]:.1f} x {b[3]-b[1]:.1f} x {DEPTH_MM} mm")
+        print(f"  Left tab: {left_tab_height:.1f}mm, Right tab: {right_tab_height:.1f}mm")
 
     # Render previews
     print("\nRendering previews...")
