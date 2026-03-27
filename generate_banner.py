@@ -154,56 +154,80 @@ def make_rounded_tab(cx, top_y, width, height, corner_radius):
 
 def find_hole_positions(polygon):
     """Find two good positions for holes near the top of a letter.
-    Scans from top downward to find Y levels where the letter is wide enough
-    to fit two holes with proper clearance from all edges."""
+    Scans from top downward. If the letter has two separate strokes at the
+    top (like H, Y), places one hole centered in each stroke.
+    Prioritizes multi-segment placement over single-segment."""
     hole_radius = HOLE_DIAMETER_MM / 2.0
     required_clearance = hole_radius + MIN_EDGE_CLEARANCE_MM
     minx, miny, maxx, maxy = polygon.bounds
     height = maxy - miny
-    # Erode the polygon by the required clearance so any point inside
-    # the eroded shape is guaranteed to have enough material around a hole
     eroded = polygon.buffer(-required_clearance)
     if eroded.is_empty:
-        # Letter is too thin everywhere, use pad reinforcement fallback
         eroded = polygon.buffer(-hole_radius)
     if eroded.is_empty:
         return None
-    # Scan Y levels from top down (upper 40% of letter)
-    for y_frac in np.linspace(0.95, 0.60, 30):
+    y_levels = np.linspace(0.95, 0.60, 30)
+    # Pass 1: look for Y levels with 2+ separate strokes (like H, Y)
+    for y_frac in y_levels:
         scan_y = miny + height * y_frac
-        # Intersect a horizontal line with the eroded polygon
         scan_line = LineString([(minx - 1, scan_y), (maxx + 1, scan_y)])
         intersection = eroded.intersection(scan_line)
         if intersection.is_empty:
             continue
-        # Get all line segments at this Y level
         if intersection.geom_type == 'MultiLineString':
             segments = list(intersection.geoms)
         elif intersection.geom_type == 'LineString':
             segments = [intersection]
         else:
             continue
-        # Find the widest segment or combination
-        all_x = []
+        seg_ranges = []
         for seg in segments:
-            coords = list(seg.coords)
-            xs = [c[0] for c in coords]
-            all_x.extend(xs)
-        if len(all_x) < 2:
+            xs = [c[0] for c in seg.coords]
+            seg_min = min(xs)
+            seg_max = max(xs)
+            seg_width = seg_max - seg_min
+            if seg_width >= HOLE_DIAMETER_MM:
+                seg_ranges.append((seg_min, seg_max, seg_width))
+        if len(seg_ranges) >= 2:
+            seg_ranges.sort(key=lambda s: s[2], reverse=True)
+            s1 = seg_ranges[0]
+            s2 = seg_ranges[1]
+            if s1[0] > s2[0]:
+                s1, s2 = s2, s1
+            left_cx = (s1[0] + s1[1]) / 2.0
+            right_cx = (s2[0] + s2[1]) / 2.0
+            if eroded.contains(Point(left_cx, scan_y)) and eroded.contains(Point(right_cx, scan_y)):
+                return (left_cx, right_cx, scan_y)
+    # Pass 2: fall back to single wide stroke with two holes inside it
+    for y_frac in y_levels:
+        scan_y = miny + height * y_frac
+        scan_line = LineString([(minx - 1, scan_y), (maxx + 1, scan_y)])
+        intersection = eroded.intersection(scan_line)
+        if intersection.is_empty:
             continue
-        x_min_avail = min(all_x)
-        x_max_avail = max(all_x)
-        span = x_max_avail - x_min_avail
-        # Need enough room for two holes with spacing between them
-        min_span = HOLE_DIAMETER_MM * 4
-        if span < min_span:
+        if intersection.geom_type == 'MultiLineString':
+            segments = list(intersection.geoms)
+        elif intersection.geom_type == 'LineString':
+            segments = [intersection]
+        else:
             continue
-        # Place holes at 20% and 80% of available span
-        left_cx = x_min_avail + span * 0.2
-        right_cx = x_min_avail + span * 0.8
-        # Verify both points are inside the eroded polygon
-        if eroded.contains(Point(left_cx, scan_y)) and eroded.contains(Point(right_cx, scan_y)):
-            return (left_cx, right_cx, scan_y)
+        seg_ranges = []
+        for seg in segments:
+            xs = [c[0] for c in seg.coords]
+            seg_min = min(xs)
+            seg_max = max(xs)
+            seg_width = seg_max - seg_min
+            if seg_width >= HOLE_DIAMETER_MM:
+                seg_ranges.append((seg_min, seg_max, seg_width))
+        if len(seg_ranges) == 1:
+            s = seg_ranges[0]
+            span = s[2]
+            if span < HOLE_DIAMETER_MM * 4:
+                continue
+            left_cx = s[0] + span * 0.2
+            right_cx = s[0] + span * 0.8
+            if eroded.contains(Point(left_cx, scan_y)) and eroded.contains(Point(right_cx, scan_y)):
+                return (left_cx, right_cx, scan_y)
     return None
 
 
