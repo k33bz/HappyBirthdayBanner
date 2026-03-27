@@ -264,17 +264,60 @@ def add_holes_to_letter(polygon):
     return result
 
 
-def add_tabs_to_letter(polygon):
-    """Add rounded tabs with holes extending above the letter.
-    Tabs are placed at 20%/80% of the letter bounding box width.
-    Each tab extends from 10mm below the letter top to 15mm above it,
-    ensuring a solid overlap connection even on narrow-topped letters."""
-    hole_radius = HOLE_DIAMETER_MM / 2.0
+def find_tab_centers(polygon):
+    """Find optimal X positions for tabs by scanning where the letter
+    has solid material near the top. Returns (left_cx, right_cx)."""
     minx, miny, maxx, maxy = polygon.bounds
     width = maxx - minx
-    # Place tabs at 20% and 80% of overall letter width
-    left_cx = minx + width * 0.20
-    right_cx = minx + width * 0.80
+    tab_overlap = 10.0
+    min_stroke_width = TAB_WIDTH_MM * 1.5  # min width to place a tab
+    scan_y = maxy - tab_overlap
+    scan_line = LineString([(minx - 1, scan_y), (maxx + 1, scan_y)])
+    raw = polygon.intersection(scan_line)
+    if raw.is_empty:
+        return minx + width * 0.35, minx + width * 0.65
+    if raw.geom_type == 'MultiLineString':
+        segs = list(raw.geoms)
+    elif raw.geom_type == 'LineString':
+        segs = [raw]
+    else:
+        return minx + width * 0.35, minx + width * 0.65
+    # Get segment ranges, filter to wide enough for a tab
+    ranges = []
+    for seg in segs:
+        xs = [c[0] for c in seg.coords]
+        seg_min, seg_max = min(xs), max(xs)
+        seg_w = seg_max - seg_min
+        if seg_w >= min_stroke_width:
+            ranges.append((seg_min, seg_max, seg_w))
+    ranges.sort()
+    if len(ranges) == 0:
+        return minx + width * 0.35, minx + width * 0.65
+    if len(ranges) >= 2:
+        # Check for real gap between the two widest segments
+        # Use the two widest, sorted by position
+        by_width = sorted(ranges, key=lambda r: r[2], reverse=True)[:2]
+        by_width.sort(key=lambda r: r[0])
+        gap = by_width[1][0] - by_width[0][1]
+        if gap > TAB_WIDTH_MM:
+            # Real multi-stroke: one tab centered per stroke
+            left_cx = (by_width[0][0] + by_width[0][1]) / 2.0
+            right_cx = (by_width[1][0] + by_width[1][1]) / 2.0
+            return left_cx, right_cx
+    # Single stroke (or segments too close together): use the widest segment
+    widest = max(ranges, key=lambda r: r[2])
+    seg_min, seg_max, seg_w = widest
+    left_cx = seg_min + seg_w * 0.25
+    right_cx = seg_min + seg_w * 0.75
+    return left_cx, right_cx
+
+
+def add_tabs_to_letter(polygon):
+    """Add rounded tabs with holes extending above the letter.
+    Tabs are centered on actual solid material at the letter top."""
+    hole_radius = HOLE_DIAMETER_MM / 2.0
+    minx, miny, maxx, maxy = polygon.bounds
+    left_cx, right_cx = find_tab_centers(polygon)
     # Tab extends from 10mm below top to 15mm above top
     tab_overlap = 10.0
     tab_bottom = maxy - tab_overlap
@@ -291,16 +334,12 @@ def add_tabs_to_letter(polygon):
     result = polygon.difference(left_hole).difference(right_hole)
     return result
 
-
-
 def get_tab_geometry(polygon):
     """Return (body_polygon, tabs_polygon) as separate geometries for multi-material.
     Body = letter with holes punched, Tabs = tab shapes with holes punched."""
     hole_radius = HOLE_DIAMETER_MM / 2.0
     minx, miny, maxx, maxy = polygon.bounds
-    width = maxx - minx
-    left_cx = minx + width * 0.20
-    right_cx = minx + width * 0.80
+    left_cx, right_cx = find_tab_centers(polygon)
     tab_overlap = 10.0
     tab_bottom = maxy - tab_overlap
     tab_top = maxy + TAB_HEIGHT_MM
