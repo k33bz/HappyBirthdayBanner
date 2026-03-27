@@ -194,7 +194,6 @@ def main():
         return
 
     print(f"  Raw bounds: {polygon.bounds}")
-    print(f"  Type: {polygon.geom_type}, area: {polygon.area:.1f}")
 
     # Scale to 200mm tall
     minx, miny, maxx, maxy = polygon.bounds
@@ -204,84 +203,83 @@ def main():
     polygon = shapely_scale(polygon, xfact=scale, yfact=scale, origin=(0, 0))
     polygon = polygon.buffer(0)
 
+    # Clean bottom: clip any small protrusions below y=5
     minx, miny, maxx, maxy = polygon.bounds
-    print(f"  Scaled: {maxx-minx:.1f} x {maxy-miny:.1f} mm")
+    clip = box(minx - 1, 5.0, maxx + 1, maxy + 1)
+    polygon = polygon.intersection(clip).buffer(0)
 
-    # Holes version
-    print("\nGenerating holes version...")
-    holes_polygon = Polygon(polygon.exterior.coords, [r.coords for r in polygon.interiors]) if polygon.geom_type == 'Polygon' else polygon
-    positions = find_hole_positions(polygon)
-    if positions:
-        left_cx, right_cx, hole_y = positions
-        print(f"  Holes at x={left_cx:.1f}, x={right_cx:.1f}, y={hole_y:.1f}")
-        left_pad = make_circle(left_cx, hole_y, PAD_RADIUS_MM)
-        right_pad = make_circle(right_cx, hole_y, PAD_RADIUS_MM)
-        holes_polygon = holes_polygon.union(left_pad).union(right_pad)
-        holes_polygon = holes_polygon.difference(make_circle(left_cx, hole_y, HOLE_DIAMETER_MM / 2.0))
-        holes_polygon = holes_polygon.difference(make_circle(right_cx, hole_y, HOLE_DIAMETER_MM / 2.0))
-    holes_polygon = holes_polygon.buffer(0)
+    # Re-translate so bottom is at y=0
+    minx, miny, maxx, maxy = polygon.bounds
+    polygon = translate(polygon, xoff=-minx, yoff=-miny)
+    polygon = polygon.buffer(0)
 
-    holes_path = os.path.join(REPO_DIR, "STL", "holes", "castle_banner.stl")
-    if polygon_to_stl(holes_polygon, DEPTH_MM, holes_path):
-        b = holes_polygon.bounds
-        print(f"  Saved: {b[2]-b[0]:.1f} x {b[3]-b[1]:.1f} x {DEPTH_MM} mm")
-
-    # Tabs version - short tabs extending above the castle top
-    print("\nGenerating tabs version...")
-    tabs_polygon = Polygon(polygon.exterior.coords, [r.coords for r in polygon.interiors]) if polygon.geom_type == 'Polygon' else polygon
-    minx, miny, maxx, maxy = tabs_polygon.bounds
+    minx, miny, maxx, maxy = polygon.bounds
     height = maxy - miny
-    width = maxx - minx
-    # Place tabs near the tallest spires so tabs are short
-    # Scan for the highest top_y at each X to find optimal positions
-    best_positions = []
-    for x_pct in np.linspace(0.15, 0.85, 50):
-        cx = minx + width * x_pct
-        for y in np.linspace(maxy, miny, 200):
-            if tabs_polygon.contains(Point(cx, y)):
-                best_positions.append((cx, y, x_pct))
-                break
-    # Find left and right candidates (left half and right half) with highest top_y
-    left_candidates = [(cx, ty, xp) for cx, ty, xp in best_positions if xp < 0.50]
-    right_candidates = [(cx, ty, xp) for cx, ty, xp in best_positions if xp >= 0.50]
-    left_best = max(left_candidates, key=lambda t: t[1]) if left_candidates else None
-    right_best = max(right_candidates, key=lambda t: t[1]) if right_candidates else None
-    if left_best and right_best:
-        tab_left_cx = left_best[0]
-        tab_right_cx = right_best[0]
-    else:
-        tab_left_cx = minx + width * 0.35
-        tab_right_cx = minx + width * 0.65
-    # Find the highest Y where the castle is solid at each tab X
-    def find_top_y(poly, cx, miny, maxy):
-        for y in np.linspace(maxy, miny, 200):
-            if poly.contains(Point(cx, y)):
-                return y
-        return maxy * 0.5
-    left_top_y = find_top_y(tabs_polygon, tab_left_cx, miny, maxy)
-    right_top_y = find_top_y(tabs_polygon, tab_right_cx, miny, maxy)
-    print(f"  Tab positions at x={tab_left_cx:.1f}, x={tab_right_cx:.1f}")
-    print(f"  Castle top at left: y={left_top_y:.1f}, right: y={right_top_y:.1f}")
-    # Tabs extend deep enough to reach solid body, up to TAB_HEIGHT above the overall top
-    tab_overlap = 40.0
-    left_bottom = left_top_y - tab_overlap
-    right_bottom = right_top_y - tab_overlap
-    # Both tabs reach the same height above the overall castle top
-    tab_top = maxy + TAB_HEIGHT_MM
-    castle_tab_width = 8.0  # Narrower than letter tabs to preserve spire detail
-    left_tab = make_rounded_tab(tab_left_cx, left_bottom, castle_tab_width, tab_top - left_bottom, TAB_CORNER_RADIUS_MM)
-    right_tab = make_rounded_tab(tab_right_cx, right_bottom, castle_tab_width, tab_top - right_bottom, TAB_CORNER_RADIUS_MM)
-    tabs_polygon = tabs_polygon.union(left_tab).union(right_tab)
-    # Holes at top of tabs
-    hole_y = maxy + TAB_HEIGHT_MM / 2.0
-    tabs_polygon = tabs_polygon.difference(make_circle(tab_left_cx, hole_y, HOLE_DIAMETER_MM / 2.0))
-    tabs_polygon = tabs_polygon.difference(make_circle(tab_right_cx, hole_y, HOLE_DIAMETER_MM / 2.0))
-    tabs_polygon = tabs_polygon.buffer(0)
+    print(f"  Scaled: {maxx-minx:.1f} x {height:.1f} mm")
 
-    tabs_path = os.path.join(REPO_DIR, "STL", "tabs", "castle_banner.stl")
-    if polygon_to_stl(tabs_polygon, DEPTH_MM, tabs_path):
-        b = tabs_polygon.bounds
-        print(f"  Saved: {b[2]-b[0]:.1f} x {b[3]-b[1]:.1f} x {DEPTH_MM} mm")
+    # Find the two central tower X positions by scanning for tallest points
+    width = maxx - minx
+    best_left = None
+    best_right = None
+    for x_pct in np.linspace(0.20, 0.80, 60):
+        cx = minx + width * x_pct
+        for y in np.linspace(maxy, miny, 300):
+            if polygon.contains(Point(cx, y)):
+                if x_pct < 0.50:
+                    if best_left is None or y > best_left[1]:
+                        best_left = (cx, y)
+                else:
+                    if best_right is None or y > best_right[1]:
+                        best_right = (cx, y)
+                break
+
+    # Place holes partway up the towers (not at the very tip)
+    # Use 80% of each tower's top Y as hole position
+    hole_radius = HOLE_DIAMETER_MM / 2.0
+    required_clearance = hole_radius + 2.0
+
+    if best_left and best_right:
+        left_cx = best_left[0]
+        right_cx = best_right[0]
+        # Place holes at about 80% of each tower's height
+        left_hole_y = best_left[1] * 0.85
+        right_hole_y = best_right[1] * 0.85
+        # Use the lower of the two so both holes are at same Y
+        hole_y = min(left_hole_y, right_hole_y)
+        print(f"  Tower tops: left=({left_cx:.1f}, {best_left[1]:.1f}), right=({right_cx:.1f}, {best_right[1]:.1f})")
+    else:
+        left_cx = minx + width * 0.38
+        right_cx = minx + width * 0.58
+        hole_y = height * 0.80
+
+    # Verify positions are inside the eroded polygon
+    eroded = polygon.buffer(-required_clearance)
+    if not eroded.is_empty:
+        # Nudge hole positions to nearest valid point if needed
+        for scan_y in [hole_y, hole_y - 5, hole_y - 10, hole_y + 5]:
+            if eroded.contains(Point(left_cx, scan_y)) and eroded.contains(Point(right_cx, scan_y)):
+                hole_y = scan_y
+                break
+
+    print(f"  Holes at x={left_cx:.1f}, x={right_cx:.1f}, y={hole_y:.1f}")
+
+    # Build castle with holes (single version for both folders)
+    castle = Polygon(polygon.exterior.coords, [r.coords for r in polygon.interiors]) if polygon.geom_type == 'Polygon' else polygon
+    # Add reinforcement pads
+    left_pad = make_circle(left_cx, hole_y, PAD_RADIUS_MM)
+    right_pad = make_circle(right_cx, hole_y, PAD_RADIUS_MM)
+    castle = castle.union(left_pad).union(right_pad)
+    # Punch holes
+    castle = castle.difference(make_circle(left_cx, hole_y, hole_radius))
+    castle = castle.difference(make_circle(right_cx, hole_y, hole_radius))
+    castle = castle.buffer(0)
+
+    # Save to both holes and tabs folders (same file, no tabs on castle)
+    for style in ["holes", "tabs"]:
+        out_path = os.path.join(REPO_DIR, "STL", style, "castle_banner.stl")
+        if polygon_to_stl(castle, DEPTH_MM, out_path):
+            b = castle.bounds
+            print(f"  {style}: {b[2]-b[0]:.1f} x {b[3]-b[1]:.1f} x {DEPTH_MM} mm")
 
     # Render previews
     print("\nRendering previews...")
