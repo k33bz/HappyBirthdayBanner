@@ -57,6 +57,16 @@ Two styles are provided in separate folders:
 - **`STL/holes/`** - 5mm holes punched directly into the letter body with 7mm reinforcement pads
 - **`STL/tabs/`** - Rounded tabs extending above each letter with 5mm holes centered in the tabs
 
+### Multi-Material (3MF + Split STL)
+
+For the Flashforge AD5X with IFS, multi-material versions let you print
+the letter body in one color and the tabs in another (e.g. clear/transparent):
+
+- **`3MF/`** - Multi-material 3MF files with body and tabs as separate material groups.
+  Import directly into Orca-FlashForge for automatic extruder assignment.
+- **`STL/multi-color/`** - Split STL files (`{letter}_body.stl` + `{letter}_tabs.stl`).
+  Import both into your slicer and assign materials manually.
+
 ### Print Quantities
 
 9 unique letter STL files + 1 castle separator, printed multiple times as needed:
@@ -97,7 +107,7 @@ Letters with two separate strokes at the top (like H) have one hole per stroke f
 The `generate_banner.py` script can regenerate all STL files. Requirements:
 
 ```bash
-pip install numpy-stl trimesh shapely fonttools triangle
+pip install numpy-stl trimesh shapely fonttools triangle lib3mf
 python generate_banner.py
 ```
 

@@ -14,6 +14,7 @@ from fontTools.pens.recordingPen import RecordingPen
 from shapely.geometry import Polygon, MultiPolygon, Point, box, LineString
 from shapely.affinity import scale as shapely_scale, translate
 import trimesh
+import lib3mf
 
 FONT_PATH = r"fonts/waltographUI.ttf"
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "STL")
@@ -291,6 +292,123 @@ def add_tabs_to_letter(polygon):
     return result
 
 
+
+def get_tab_geometry(polygon):
+    """Return (body_polygon, tabs_polygon) as separate geometries for multi-material.
+    Body = letter with holes punched, Tabs = tab shapes with holes punched."""
+    hole_radius = HOLE_DIAMETER_MM / 2.0
+    minx, miny, maxx, maxy = polygon.bounds
+    width = maxx - minx
+    left_cx = minx + width * 0.20
+    right_cx = minx + width * 0.80
+    tab_overlap = 10.0
+    tab_bottom = maxy - tab_overlap
+    tab_top = maxy + TAB_HEIGHT_MM
+    tab_full_height = tab_top - tab_bottom
+    left_tab = make_rounded_tab(left_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM)
+    right_tab = make_rounded_tab(right_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM)
+    hole_y = maxy + TAB_HEIGHT_MM / 2.0
+    left_hole = make_circle(left_cx, hole_y, hole_radius)
+    right_hole = make_circle(right_cx, hole_y, hole_radius)
+    # Tabs only (excluding letter body overlap area)
+    tabs_only = left_tab.union(right_tab).difference(polygon)
+    tabs_only = tabs_only.difference(left_hole).difference(right_hole).buffer(0)
+    # Body stays as-is (no tabs added)
+    body = polygon.buffer(0)
+    return body, tabs_only
+
+
+def polygon_to_trimesh(polygon, depth):
+    """Convert a shapely polygon to a trimesh mesh."""
+    if polygon is None or polygon.is_empty:
+        return None
+    if isinstance(polygon, MultiPolygon):
+        polys = list(polygon.geoms)
+    else:
+        polys = [polygon]
+    meshes = []
+    for poly in polys:
+        if poly.is_empty or not poly.is_valid:
+            continue
+        try:
+            m = trimesh.creation.extrude_polygon(poly, height=depth)
+            if m is not None and len(m.vertices) > 0:
+                meshes.append(m)
+        except Exception:
+            continue
+    if not meshes:
+        return None
+    return trimesh.util.concatenate(meshes)
+
+
+def export_3mf(body_mesh, tabs_mesh, filename):
+    """Export a multi-material 3MF with body and tabs as separate material groups."""
+    wrapper = lib3mf.Wrapper()
+    model = wrapper.CreateModel()
+    model.SetUnit(lib3mf.ModelUnit.MilliMeter)
+    # Create material group with two materials
+    mat_group = model.AddBaseMaterialGroup()
+    idx_body = mat_group.AddMaterial("Letter Body", wrapper.RGBAToColor(70, 140, 255, 255))
+    idx_tabs = mat_group.AddMaterial("Tabs", wrapper.RGBAToColor(200, 200, 200, 128))
+    mat_id = mat_group.GetResourceID()
+
+    def add_mesh_object(mesh, name, mat_idx):
+        obj = model.AddMeshObject()
+        obj.SetName(name)
+        verts = mesh.vertices
+        faces = mesh.faces
+        # Add vertices
+        for v in verts:
+            pos = lib3mf.Position()
+            pos.Coordinates[0] = float(v[0])
+            pos.Coordinates[1] = float(v[1])
+            pos.Coordinates[2] = float(v[2])
+            obj.AddVertex(pos)
+        # Add triangles
+        for f in faces:
+            tri = lib3mf.Triangle()
+            tri.Indices[0] = int(f[0])
+            tri.Indices[1] = int(f[1])
+            tri.Indices[2] = int(f[2])
+            obj.AddTriangle(tri)
+        obj.SetObjectLevelProperty(mat_id, mat_idx)
+        transform = wrapper.GetIdentityTransform()
+        model.AddBuildItem(obj, transform)
+
+    add_mesh_object(body_mesh, "Letter Body", idx_body)
+    if tabs_mesh is not None:
+        add_mesh_object(tabs_mesh, "Tabs", idx_tabs)
+    writer = model.QueryWriter("3mf")
+    writer.WriteToFile(filename)
+    return True
+
+
+def process_character_multimat(char, output_3mf_dir, output_split_dir):
+    """Generate multi-material 3MF and split STL files for a character."""
+    polygon = get_scaled_polygon(char)
+    if polygon is None:
+        return False
+    body_poly, tabs_poly = get_tab_geometry(polygon)
+    body_mesh = polygon_to_trimesh(body_poly, DEPTH_MM)
+    tabs_mesh = polygon_to_trimesh(tabs_poly, DEPTH_MM)
+    if body_mesh is None:
+        return False
+    # Split STLs
+    body_stl = os.path.join(output_split_dir, f"{char}_body.stl")
+    tabs_stl = os.path.join(output_split_dir, f"{char}_tabs.stl")
+    body_mesh.export(body_stl, file_type="stl")
+    if tabs_mesh is not None:
+        tabs_mesh.export(tabs_stl, file_type="stl")
+    # Multi-material 3MF
+    threemf_path = os.path.join(output_3mf_dir, f"{char}_banner.3mf")
+    export_3mf(body_mesh, tabs_mesh, threemf_path)
+    b = body_poly.bounds
+    tb = tabs_poly.bounds if not tabs_poly.is_empty else body_poly.bounds
+    total_h = max(b[3], tb[3]) - min(b[1], tb[1])
+    print(f"  {char}: body + tabs -> {threemf_path}")
+    return True
+
+
 def polygon_to_stl(polygon, depth, filename):
     if polygon is None or polygon.is_empty:
         return False
@@ -403,6 +521,20 @@ def main():
     print("  - No supports needed (flat letters)")
     print("  - Infill: 100% (only 1mm thick)")
     print("  - Thread ribbon/string through the holes")
+
+    # Multi-material versions (3MF + split STL)
+    threemf_dir = os.path.join(os.path.dirname(OUTPUT_DIR), "3MF")
+    split_dir = os.path.join(OUTPUT_DIR, "multi-color")
+    os.makedirs(threemf_dir, exist_ok=True)
+    os.makedirs(split_dir, exist_ok=True)
+    print("\nStyle 3: Multi-material (3MF + split STL)")
+    print("-" * 40)
+    for char in unique_chars:
+        process_character_multimat(char, threemf_dir, split_dir)
+    print(f"\n  3MF files (multi-material): {threemf_dir}")
+    print(f"  Split STLs (body + tabs):   {split_dir}")
+    print("  Import 3MF into Orca-FlashForge for automatic material assignment")
+    print("  Or import split STLs and assign materials manually in slicer")
 
 
 if __name__ == "__main__":
