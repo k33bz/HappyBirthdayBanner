@@ -33,10 +33,11 @@ Available as single-material STL or multi-material 3MF (body + tabs as separate 
 
 ### Castle Separator
 
-Goes between HAPPY and BIRTHDAY on the string (holes only, no tabs):
+Goes between HAPPY and BIRTHDAY on the string:
 
-| ![Castle](previews/holes/castle_banner.png) |
-|---|
+| Holes | Tabs |
+|---|---|
+| ![Castle holes](previews/holes/castle_banner.png) | ![Castle tabs](previews/tabs/castle_banner.png) |
 
 ## Specifications
 
