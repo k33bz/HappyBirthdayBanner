@@ -16,7 +16,7 @@ from shapely.affinity import scale as shapely_scale, translate
 import trimesh
 import lib3mf
 
-FONT_PATH = r"fonts/waltographUI.ttf"
+FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "waltographUI.ttf")
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "STL")
 TARGET_HEIGHT_MM = 200.0
 DEPTH_MM = 1.0

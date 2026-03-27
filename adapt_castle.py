@@ -12,7 +12,7 @@ from shapely.geometry import Polygon, MultiPolygon, Point, LineString, box
 from shapely.ops import unary_union
 from shapely.affinity import scale as shapely_scale, translate
 
-REPO_DIR = r"REPO_DIR"
+REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 SOURCE_STL = os.path.join(REPO_DIR, "disney_castle_mickey_head.stl")
 TARGET_HEIGHT_MM = 200.0
 DEPTH_MM = 1.0
