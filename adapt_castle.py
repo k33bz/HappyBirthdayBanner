@@ -12,7 +12,7 @@ from shapely.geometry import Polygon, MultiPolygon, Point, LineString, box
 from shapely.ops import unary_union
 from shapely.affinity import scale as shapely_scale, translate
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = r"C:\Users\k33bz\OneDrive\git\HappyBirthdayBanner"
 SOURCE_STL = os.path.join(REPO_DIR, "disney_castle_mickey_head.stl")
 TARGET_HEIGHT_MM = 200.0
 DEPTH_MM = 1.0
@@ -186,6 +186,32 @@ def render_preview(stl_path, png_path):
     img.save(png_path)
 
 
+def render_preview_dual(body_stl_path, tabs_stl_path, png_path):
+    from stl import mesh as stl_mesh
+    from PIL import Image, ImageDraw
+    mb = stl_mesh.Mesh.from_file(body_stl_path)
+    mt = stl_mesh.Mesh.from_file(tabs_stl_path)
+    all_x = np.concatenate([mb.vectors[:,:,0].flatten(), mt.vectors[:,:,0].flatten()])
+    all_y = np.concatenate([mb.vectors[:,:,1].flatten(), mt.vectors[:,:,1].flatten()])
+    x_min, x_max = all_x.min(), all_x.max()
+    y_min, y_max = all_y.min(), all_y.max()
+    model_w, model_h = x_max - x_min, y_max - y_min
+    W, H = 400, 500
+    PAD = 20
+    sc = min((W - 2*PAD) / model_w, (H - 2*PAD) / model_h)
+    ox = PAD + ((W - 2*PAD) - model_w * sc) / 2
+    oy = PAD + ((H - 2*PAD) - model_h * sc) / 2
+    img = Image.new("RGB", (W, H), (30, 30, 30))
+    draw = ImageDraw.Draw(img)
+    for tri in mb.vectors:
+        pts = [(ox + (v[0]-x_min)*sc, H - (oy + (v[1]-y_min)*sc)) for v in tri]
+        draw.polygon(pts, fill=(70, 140, 255), outline=(50, 110, 220))
+    for tri in mt.vectors:
+        pts = [(ox + (v[0]-x_min)*sc, H - (oy + (v[1]-y_min)*sc)) for v in tri]
+        draw.polygon(pts, fill=(180, 200, 220), outline=(140, 160, 180))
+    img.save(png_path)
+
+
 def main():
     print("Loading castle STL and extracting 2D outline...")
     polygon = stl_to_2d_outline(SOURCE_STL, clip_y=SPIKE_CLIP_Y)
@@ -281,18 +307,21 @@ def main():
         print(f"  holes: {b[2]-b[0]:.1f} x {b[3]-b[1]:.1f} x {DEPTH_MM} mm")
 
     # === Tabs version ===
-    # Tabs extend from each flag/spire tip upward to the same height
+    # Tabs extend from the cone tower tops (where towers widen into body)
+    # up through the flags and above, so tabs are solidly connected
     print("\nGenerating tabs version...")
     tabs_castle = base_poly.buffer(0)
     left_top = best_left[1] if best_left else maxy * 0.85
     right_top = best_right[1] if best_right else maxy * 0.95
     # Both tabs reach the same Y above the castle
     tab_target_y = max(left_top, right_top) + TAB_HEIGHT_MM
-    left_tab_height = tab_target_y - (left_top - 10.0)  # 10mm overlap into spire
-    right_tab_height = tab_target_y - (right_top - 10.0)
+    # Tabs extend down to y=140 where the cone towers merge into the body
+    cone_base_y = 140.0
+    left_tab_height = tab_target_y - cone_base_y
+    right_tab_height = tab_target_y - cone_base_y
     castle_tab_width = 8.0
-    left_tab = make_rounded_tab(left_cx, left_top - 10.0, castle_tab_width, left_tab_height, TAB_CORNER_RADIUS_MM)
-    right_tab = make_rounded_tab(right_cx, right_top - 10.0, castle_tab_width, right_tab_height, TAB_CORNER_RADIUS_MM)
+    left_tab = make_rounded_tab(left_cx, cone_base_y, castle_tab_width, left_tab_height, TAB_CORNER_RADIUS_MM)
+    right_tab = make_rounded_tab(right_cx, cone_base_y, castle_tab_width, right_tab_height, TAB_CORNER_RADIUS_MM)
     tabs_castle = tabs_castle.union(left_tab).union(right_tab)
     # Holes at the top of each tab (same Y for level hanging)
     tab_hole_y = tab_target_y - TAB_HEIGHT_MM / 2.0
@@ -306,13 +335,27 @@ def main():
         print(f"  tabs: {b[2]-b[0]:.1f} x {b[3]-b[1]:.1f} x {DEPTH_MM} mm")
         print(f"  Left tab: {left_tab_height:.1f}mm, Right tab: {right_tab_height:.1f}mm")
 
+    # Save castle body and tabs-only as separate STLs for multi-color preview
+    tabs_only = left_tab.union(right_tab).difference(base_poly)
+    tabs_only = tabs_only.difference(make_circle(left_cx, tab_hole_y, hole_radius))
+    tabs_only = tabs_only.difference(make_circle(right_cx, tab_hole_y, hole_radius))
+    tabs_only = tabs_only.buffer(0)
+    body_stl = os.path.join(REPO_DIR, "STL", "multi-color", "castle_body.stl")
+    tabs_stl = os.path.join(REPO_DIR, "STL", "multi-color", "castle_tabs.stl")
+    polygon_to_stl(base_poly, DEPTH_MM, body_stl)
+    polygon_to_stl(tabs_only, DEPTH_MM, tabs_stl)
+
     # Render previews
     print("\nRendering previews...")
-    for style in ["holes", "tabs"]:
-        stl_path = os.path.join(REPO_DIR, "STL", style, "castle_banner.stl")
-        png_path = os.path.join(REPO_DIR, "previews", style, "castle_banner.png")
-        render_preview(stl_path, png_path)
-        print(f"  {style}/castle_banner.png")
+    # Holes: single color
+    render_preview(
+        os.path.join(REPO_DIR, "STL", "holes", "castle_banner.stl"),
+        os.path.join(REPO_DIR, "previews", "holes", "castle_banner.png"))
+    print("  holes/castle_banner.png")
+    # Tabs: multi-color (body blue, tabs silver)
+    render_preview_dual(body_stl, tabs_stl,
+        os.path.join(REPO_DIR, "previews", "tabs", "castle_banner.png"))
+    print("  tabs/castle_banner.png (multi-color)")
 
     print("\nDone! Castle separator goes between HAPPY and BIRTHDAY on the string.")
 
