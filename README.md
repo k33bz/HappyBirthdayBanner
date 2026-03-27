@@ -1,6 +1,7 @@
 # Happy Birthday Banner
 
-3D-printable **HAPPY BIRTHDAY** banner letters in the Waltograph UI (Disney-style) font.
+3D-printable **HAPPY BIRTHDAY** banner letters in the Waltograph UI (Disney-style) font,
+with a Disney castle separator between the words.
 Designed for the **Flashforge Adventurer 5X** but works on any FDM printer with a 200mm+ build height.
 
 ## Preview
@@ -16,6 +17,11 @@ Holes punched directly into the letter body with reinforcement pads:
 |---|---|---|---|---|---|---|---|
 | ![B](previews/holes/B_banner.png) | ![I](previews/holes/I_banner.png) | ![R](previews/holes/R_banner.png) | ![T](previews/holes/T_banner.png) | ![H](previews/holes/H_banner.png) | ![D](previews/holes/D_banner.png) | ![A](previews/holes/A_banner.png) | ![Y](previews/holes/Y_banner.png) |
 
+
+#### Castle Separator
+| ![Castle](previews/holes/castle_banner.png) |
+|---|
+
 ### Tabs Style
 Rounded tabs extending above each letter with holes for stringing:
 
@@ -26,6 +32,11 @@ Rounded tabs extending above each letter with holes for stringing:
 | B | I | R | T | H | D | A | Y |
 |---|---|---|---|---|---|---|---|
 | ![B](previews/tabs/B_banner.png) | ![I](previews/tabs/I_banner.png) | ![R](previews/tabs/R_banner.png) | ![T](previews/tabs/T_banner.png) | ![H](previews/tabs/H_banner.png) | ![D](previews/tabs/D_banner.png) | ![A](previews/tabs/A_banner.png) | ![Y](previews/tabs/Y_banner.png) |
+
+
+#### Castle Separator
+| ![Castle](previews/tabs/castle_banner.png) |
+|---|
 
 ## Specifications
 
@@ -48,7 +59,7 @@ Two styles are provided in separate folders:
 
 ### Print Quantities
 
-9 unique letter STL files, printed multiple times as needed:
+9 unique letter STL files + 1 castle separator, printed multiple times as needed:
 
 | Letter | Quantity | STL File |
 |--------|----------|----------|
@@ -61,7 +72,8 @@ Two styles are provided in separate folders:
 | R | 1x | `R_banner.stl` |
 | T | 1x | `T_banner.stl` |
 | Y | 2x | `Y_banner.stl` |
-| **Total** | **13 prints** | |
+| Castle | 1x | `castle_banner.stl` |
+| **Total** | **14 prints** | |
 
 ## Print Settings (Flashforge AD5X)
 
@@ -76,7 +88,8 @@ The widest letter (B) is ~178mm, which fits within the AD5X's 305mm build plate.
 
 ## Assembly
 
-Thread a ribbon or string through the holes at the top of each letter to hang the banner.
+Thread a ribbon or string through the holes at the top of each piece to hang the banner.
+The castle separator goes between HAPPY and BIRTHDAY on the string.
 Letters with two separate strokes at the top (like H) have one hole per stroke for balanced hanging.
 
 ## Regenerating STLs
@@ -92,6 +105,12 @@ The script uses geometry-aware hole placement:
 - Erodes the letter polygon to guarantee minimum 2mm clearance from all edges
 - Detects multi-stroke letter tops (like H) and places one hole per stroke
 - Distinguishes real gaps from decorative thin spots in the font
+
+## Castle Separator
+
+The Disney castle with Mickey head cutout is adapted from a cake topper STL.
+The adapt_castle.py script (in the repo root) extracts the 2D outline, removes the cake topper spike,
+scales to 200mm tall, and generates both holes and tabs versions.
 
 ## Font
 
