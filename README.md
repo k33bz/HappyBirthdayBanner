@@ -20,7 +20,7 @@ All holes aligned at Y=185mm so the banner hangs level:
 | ![B](previews/holes/B_banner.png) | ![I](previews/holes/I_banner.png) | ![R](previews/holes/R_banner.png) | ![T](previews/holes/T_banner.png) | ![H](previews/holes/H_banner.png) | ![D](previews/holes/D_banner.png) | ![A](previews/holes/A_banner.png) | ![Y](previews/holes/Y_banner.png) |
 
 ### Tabs Style
-Rounded tabs extending above each letter with holes for stringing.
+Dome-topped tabs extending above each letter with holes for stringing (semicircular top for clean FDM printing).
 Available as single-material STL or multi-material 3MF (body + tabs as separate colors):
 
 | H | A | P | P | Y |
@@ -50,7 +50,7 @@ Goes between HAPPY and BIRTHDAY on the string:
 | Min edge clearance | 2mm from hole edge to letter edge |
 | Font | Waltograph UI (included in `fonts/`) |
 | Tab height | 15mm above letter + 10mm overlap into body |
-| Tab width | 14mm with 3mm rounded corners |
+| Tab width | 14mm with semicircular dome top |
 
 ## File Formats
 
@@ -110,7 +110,7 @@ python adapt_castle.py        # castle separator
 
 ## Castle Separator
 
-The Disney castle with Mickey head cutout is adapted from a cake topper STL
+The Disney castle with Mickey head cutout is adapted from a [cake topper STL on Creality Cloud](https://www.crealitycloud.com/model-detail/disney-castle-cake-topper)
 (`disney_castle_mickey_head.stl`). The `adapt_castle.py` script extracts the
 2D outline, removes the cake topper spike, scales to 200mm tall, and adds
 holes on the two central towers for stringing.

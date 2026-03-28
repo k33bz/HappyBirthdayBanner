@@ -32,10 +32,18 @@ def make_circle(cx, cy, radius, n_segments=HOLE_CIRCLE_RES):
 
 
 def make_rounded_tab(cx, top_y, width, height, corner_radius):
+    """Create a tab with a semicircular (dome) top for clean FDM printing.
+    The bottom is flat (overlaps into letter body), the top is a half-circle."""
     half_w = width / 2.0
-    tab = box(cx - half_w, top_y, cx + half_w, top_y + height)
-    tab = tab.buffer(corner_radius, join_style=1).buffer(-corner_radius, join_style=1)
-    return tab
+    dome_radius = half_w
+    rect_top = top_y + height - dome_radius
+    rect = box(cx - half_w, top_y, cx + half_w, rect_top)
+    # Semicircle dome on top
+    angles = np.linspace(0, np.pi, 32)
+    dome_pts = [(cx + dome_radius * np.cos(a), rect_top + dome_radius * np.sin(a)) for a in angles]
+    dome_pts.append((cx - half_w, rect_top))
+    dome = Polygon(dome_pts)
+    return rect.union(dome)
 
 
 def stl_to_2d_outline(stl_path, clip_y=None):

@@ -144,15 +144,18 @@ def make_circle(cx, cy, radius, n_segments=HOLE_CIRCLE_RES):
 
 
 def make_rounded_tab(cx, top_y, width, height, corner_radius):
-    """Create a rounded rectangle tab extending upward from top_y."""
+    """Create a tab with a semicircular (dome) top for clean FDM printing.
+    The bottom is flat (overlaps into letter body), the top is a half-circle."""
     half_w = width / 2.0
-    left = cx - half_w
-    right = cx + half_w
-    bottom = top_y
-    top = top_y + height
-    tab = box(left, bottom, right, top)
-    tab = tab.buffer(corner_radius, join_style=1).buffer(-corner_radius, join_style=1)
-    return tab
+    dome_radius = half_w
+    rect_top = top_y + height - dome_radius
+    rect = box(cx - half_w, top_y, cx + half_w, rect_top)
+    # Semicircle dome on top
+    angles = np.linspace(0, np.pi, 32)
+    dome_pts = [(cx + dome_radius * np.cos(a), rect_top + dome_radius * np.sin(a)) for a in angles]
+    dome_pts.append((cx - half_w, rect_top))
+    dome = Polygon(dome_pts)
+    return rect.union(dome)
 
 
 def find_hole_positions(polygon):
@@ -448,6 +451,60 @@ def process_character_multimat(char, output_3mf_dir, output_split_dir):
     return True
 
 
+def render_preview(stl_path, png_path):
+    """Render a simple 2D preview of an STL file."""
+    from stl import mesh as stl_mesh
+    from PIL import Image, ImageDraw
+    m = stl_mesh.Mesh.from_file(stl_path)
+    all_x = m.vectors[:, :, 0].flatten()
+    all_y = m.vectors[:, :, 1].flatten()
+    x_min, x_max = all_x.min(), all_x.max()
+    y_min, y_max = all_y.min(), all_y.max()
+    model_w, model_h = x_max - x_min, y_max - y_min
+    W, H = 400, 500
+    PAD = 20
+    sc = min((W - 2 * PAD) / model_w, (H - 2 * PAD) / model_h)
+    ox = PAD + ((W - 2 * PAD) - model_w * sc) / 2
+    oy = PAD + ((H - 2 * PAD) - model_h * sc) / 2
+    img = Image.new("RGB", (W, H), (30, 30, 30))
+    draw = ImageDraw.Draw(img)
+    for tri in m.vectors:
+        pts = []
+        for v in tri:
+            px = ox + (v[0] - x_min) * sc
+            py = H - (oy + (v[1] - y_min) * sc)
+            pts.append((px, py))
+        draw.polygon(pts, fill=(70, 140, 255), outline=(50, 110, 220))
+    img.save(png_path)
+
+
+def render_preview_dual(body_stl_path, tabs_stl_path, png_path):
+    """Render a dual-color preview showing body and tabs in different colors."""
+    from stl import mesh as stl_mesh
+    from PIL import Image, ImageDraw
+    mb = stl_mesh.Mesh.from_file(body_stl_path)
+    mt = stl_mesh.Mesh.from_file(tabs_stl_path)
+    all_x = np.concatenate([mb.vectors[:,:,0].flatten(), mt.vectors[:,:,0].flatten()])
+    all_y = np.concatenate([mb.vectors[:,:,1].flatten(), mt.vectors[:,:,1].flatten()])
+    x_min, x_max = all_x.min(), all_x.max()
+    y_min, y_max = all_y.min(), all_y.max()
+    model_w, model_h = x_max - x_min, y_max - y_min
+    W, H = 400, 500
+    PAD = 20
+    sc = min((W - 2*PAD) / model_w, (H - 2*PAD) / model_h)
+    ox = PAD + ((W - 2*PAD) - model_w * sc) / 2
+    oy = PAD + ((H - 2*PAD) - model_h * sc) / 2
+    img = Image.new("RGB", (W, H), (30, 30, 30))
+    draw = ImageDraw.Draw(img)
+    for tri in mb.vectors:
+        pts = [(ox + (v[0]-x_min)*sc, H - (oy + (v[1]-y_min)*sc)) for v in tri]
+        draw.polygon(pts, fill=(70, 140, 255), outline=(50, 110, 220))
+    for tri in mt.vectors:
+        pts = [(ox + (v[0]-x_min)*sc, H - (oy + (v[1]-y_min)*sc)) for v in tri]
+        draw.polygon(pts, fill=(180, 200, 220), outline=(140, 160, 180))
+    img.save(png_path)
+
+
 def polygon_to_stl(polygon, depth, filename):
     if polygon is None or polygon.is_empty:
         return False
@@ -574,6 +631,33 @@ def main():
     print(f"  Split STLs (body + tabs):   {split_dir}")
     print("  Import 3MF into Orca-FlashForge for automatic material assignment")
     print("  Or import split STLs and assign materials manually in slicer")
+
+    # Render preview images
+    preview_base = os.path.join(os.path.dirname(OUTPUT_DIR), "previews")
+    holes_preview_dir = os.path.join(preview_base, "holes")
+    tabs_preview_dir = os.path.join(preview_base, "tabs")
+    multi_preview_dir = os.path.join(preview_base, "multi-color")
+    os.makedirs(holes_preview_dir, exist_ok=True)
+    os.makedirs(tabs_preview_dir, exist_ok=True)
+    os.makedirs(multi_preview_dir, exist_ok=True)
+
+    print("\nRendering previews...")
+    for char in unique_chars:
+        # Holes preview
+        holes_stl = os.path.join(holes_dir, f"{char}_banner.stl")
+        if os.path.exists(holes_stl):
+            render_preview(holes_stl, os.path.join(holes_preview_dir, f"{char}_banner.png"))
+        # Tabs preview
+        tabs_stl = os.path.join(tabs_dir, f"{char}_banner.stl")
+        if os.path.exists(tabs_stl):
+            render_preview(tabs_stl, os.path.join(tabs_preview_dir, f"{char}_banner.png"))
+        # Multi-color preview
+        body_stl = os.path.join(split_dir, f"{char}_body.stl")
+        tabs_stl_mc = os.path.join(split_dir, f"{char}_tabs.stl")
+        if os.path.exists(body_stl) and os.path.exists(tabs_stl_mc):
+            render_preview_dual(body_stl, tabs_stl_mc, os.path.join(multi_preview_dir, f"{char}_banner.png"))
+        print(f"  {char}: done")
+    print("Previews saved to previews/")
 
 
 if __name__ == "__main__":
