@@ -451,8 +451,52 @@ def process_character_multimat(char, output_3mf_dir, output_split_dir):
     return True
 
 
+def _get_boundary_edges(mesh_vectors):
+    """Find boundary edges (edges belonging to only one triangle) from STL vectors.
+    Returns list of ((x1,y1), (x2,y2)) in 2D (XY plane)."""
+    from collections import Counter
+    edge_counts = Counter()
+    for tri in mesh_vectors:
+        for i in range(3):
+            v1 = (round(tri[i][0], 4), round(tri[i][1], 4))
+            v2 = (round(tri[(i+1)%3][0], 4), round(tri[(i+1)%3][1], 4))
+            edge = tuple(sorted([v1, v2]))
+            edge_counts[edge] += 1
+    return [e for e, count in edge_counts.items() if count == 1]
+
+
+def _setup_preview(x_min, x_max, y_min, y_max):
+    """Compute transform parameters for mapping model coords to image coords."""
+    model_w, model_h = x_max - x_min, y_max - y_min
+    W, H = 400, 500
+    PAD = 20
+    sc = min((W - 2 * PAD) / model_w, (H - 2 * PAD) / model_h)
+    ox = PAD + ((W - 2 * PAD) - model_w * sc) / 2
+    oy = PAD + ((H - 2 * PAD) - model_h * sc) / 2
+    return W, H, sc, ox, oy
+
+
+def _to_px(x, y, x_min, y_min, W, H, sc, ox, oy):
+    """Convert model coordinates to pixel coordinates."""
+    return (ox + (x - x_min) * sc, H - (oy + (y - y_min) * sc))
+
+
+def _draw_mesh(draw, mesh_vectors, x_min, y_min, W, H, sc, ox, oy, fill, outline):
+    """Draw a mesh as a solid fill with boundary-only outlines."""
+    # Fill all triangles without per-triangle outlines
+    for tri in mesh_vectors:
+        pts = [_to_px(v[0], v[1], x_min, y_min, W, H, sc, ox, oy) for v in tri]
+        draw.polygon(pts, fill=fill)
+    # Draw only boundary edges for clean outer outline
+    edges = _get_boundary_edges(mesh_vectors)
+    for (x1, y1), (x2, y2) in edges:
+        p1 = _to_px(x1, y1, x_min, y_min, W, H, sc, ox, oy)
+        p2 = _to_px(x2, y2, x_min, y_min, W, H, sc, ox, oy)
+        draw.line([p1, p2], fill=outline, width=2)
+
+
 def render_preview(stl_path, png_path):
-    """Render a simple 2D preview of an STL file."""
+    """Render a clean 2D preview of an STL file with boundary-only outlines."""
     from stl import mesh as stl_mesh
     from PIL import Image, ImageDraw
     m = stl_mesh.Mesh.from_file(stl_path)
@@ -460,21 +504,11 @@ def render_preview(stl_path, png_path):
     all_y = m.vectors[:, :, 1].flatten()
     x_min, x_max = all_x.min(), all_x.max()
     y_min, y_max = all_y.min(), all_y.max()
-    model_w, model_h = x_max - x_min, y_max - y_min
-    W, H = 400, 500
-    PAD = 20
-    sc = min((W - 2 * PAD) / model_w, (H - 2 * PAD) / model_h)
-    ox = PAD + ((W - 2 * PAD) - model_w * sc) / 2
-    oy = PAD + ((H - 2 * PAD) - model_h * sc) / 2
+    W, H, sc, ox, oy = _setup_preview(x_min, x_max, y_min, y_max)
     img = Image.new("RGB", (W, H), (30, 30, 30))
     draw = ImageDraw.Draw(img)
-    for tri in m.vectors:
-        pts = []
-        for v in tri:
-            px = ox + (v[0] - x_min) * sc
-            py = H - (oy + (v[1] - y_min) * sc)
-            pts.append((px, py))
-        draw.polygon(pts, fill=(70, 140, 255), outline=(50, 110, 220))
+    _draw_mesh(draw, m.vectors, x_min, y_min, W, H, sc, ox, oy,
+               fill=(70, 140, 255), outline=(50, 110, 220))
     img.save(png_path)
 
 
@@ -488,20 +522,13 @@ def render_preview_dual(body_stl_path, tabs_stl_path, png_path):
     all_y = np.concatenate([mb.vectors[:,:,1].flatten(), mt.vectors[:,:,1].flatten()])
     x_min, x_max = all_x.min(), all_x.max()
     y_min, y_max = all_y.min(), all_y.max()
-    model_w, model_h = x_max - x_min, y_max - y_min
-    W, H = 400, 500
-    PAD = 20
-    sc = min((W - 2*PAD) / model_w, (H - 2*PAD) / model_h)
-    ox = PAD + ((W - 2*PAD) - model_w * sc) / 2
-    oy = PAD + ((H - 2*PAD) - model_h * sc) / 2
+    W, H, sc, ox, oy = _setup_preview(x_min, x_max, y_min, y_max)
     img = Image.new("RGB", (W, H), (30, 30, 30))
     draw = ImageDraw.Draw(img)
-    for tri in mb.vectors:
-        pts = [(ox + (v[0]-x_min)*sc, H - (oy + (v[1]-y_min)*sc)) for v in tri]
-        draw.polygon(pts, fill=(70, 140, 255), outline=(50, 110, 220))
-    for tri in mt.vectors:
-        pts = [(ox + (v[0]-x_min)*sc, H - (oy + (v[1]-y_min)*sc)) for v in tri]
-        draw.polygon(pts, fill=(180, 200, 220), outline=(140, 160, 180))
+    _draw_mesh(draw, mb.vectors, x_min, y_min, W, H, sc, ox, oy,
+               fill=(70, 140, 255), outline=(50, 110, 220))
+    _draw_mesh(draw, mt.vectors, x_min, y_min, W, H, sc, ox, oy,
+               fill=(180, 200, 220), outline=(140, 160, 180))
     img.save(png_path)
 
 
