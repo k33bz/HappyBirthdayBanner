@@ -30,6 +30,7 @@ TAB_WIDTH_MM = 14.0
 TAB_HEIGHT_MM = 15.0
 TAB_CORNER_RADIUS_MM = 3.0
 FIXED_HOLE_Y_MM = 185.0  # All letters use same Y so banner hangs level
+SNAP_TAB_HEIGHT_MM = 25.0      # taller tab for snap-fit (more room for Mickey)
 # Snap-fit tab dimensions (3mm total, rabbet joint profile)
 SNAP_BODY_DEPTH_MM = 3.0       # total letter/tab thickness
 SNAP_FACE_DEPTH_MM = 1.0       # solid front face thickness
@@ -155,19 +156,40 @@ def make_circle(cx, cy, radius, n_segments=HOLE_CIRCLE_RES):
     return Polygon(coords)
 
 
-def make_rounded_tab(cx, top_y, width, height, corner_radius):
-    """Create a tab with a semicircular (dome) top for clean FDM printing.
-    The bottom is flat (overlaps into letter body), the top is a half-circle."""
+def make_rounded_tab(cx, top_y, width, height, corner_radius, double_dome=False):
+    """Create a tab shape for FDM printing.
+    double_dome=False: flat bottom, dome top (for styles 2/3 where bottom overlaps letter)
+    double_dome=True: dome bottom AND top, capsule shape (for snap-fit)"""
     half_w = width / 2.0
     dome_radius = half_w
-    rect_top = top_y + height - dome_radius
-    rect = box(cx - half_w, top_y, cx + half_w, rect_top)
-    # Semicircle dome on top
-    angles = np.linspace(0, np.pi, 32)
-    dome_pts = [(cx + dome_radius * np.cos(a), rect_top + dome_radius * np.sin(a)) for a in angles]
-    dome_pts.append((cx - half_w, rect_top))
-    dome = Polygon(dome_pts)
-    return rect.union(dome)
+    if double_dome:
+        # Capsule shape: dome on both ends
+        rect_bottom = top_y + dome_radius
+        rect_top = top_y + height - dome_radius
+        if rect_top <= rect_bottom:
+            # Height too short for two domes, just make an ellipse
+            rect_top = rect_bottom = top_y + height / 2.0
+        rect = box(cx - half_w, rect_bottom, cx + half_w, rect_top)
+        # Top dome
+        top_angles = np.linspace(0, np.pi, 32)
+        top_pts = [(cx + dome_radius * np.cos(a), rect_top + dome_radius * np.sin(a)) for a in top_angles]
+        top_pts.append((cx - half_w, rect_top))
+        top_dome = Polygon(top_pts)
+        # Bottom dome
+        bot_angles = np.linspace(np.pi, 2 * np.pi, 32)
+        bot_pts = [(cx + dome_radius * np.cos(a), rect_bottom + dome_radius * np.sin(a)) for a in bot_angles]
+        bot_pts.append((cx + half_w, rect_bottom))
+        bot_dome = Polygon(bot_pts)
+        return rect.union(top_dome).union(bot_dome)
+    else:
+        # Original: flat bottom, dome top
+        rect_top = top_y + height - dome_radius
+        rect = box(cx - half_w, top_y, cx + half_w, rect_top)
+        angles = np.linspace(0, np.pi, 32)
+        dome_pts = [(cx + dome_radius * np.cos(a), rect_top + dome_radius * np.sin(a)) for a in angles]
+        dome_pts.append((cx - half_w, rect_top))
+        dome = Polygon(dome_pts)
+        return rect.union(dome)
 
 
 def make_mickey_head(cx, cy, head_r=None, ear_r=None, ear_angle=None, smooth=None):
@@ -415,7 +437,7 @@ def get_snap_tab_geometry(polygon):
     for snap-fit variant with rabbet joint.
 
     body_poly: letter shape
-    tab_poly: full tab shape including overlap region
+    tab_poly: full tab shape including overlap region (double-dome capsule)
     tab_overlap_poly: just the overlap area (intersection of tabs and letter)
     mickey_positions: list of (cx, cy) for joint placement
     """
@@ -424,11 +446,13 @@ def get_snap_tab_geometry(polygon):
     left_cx, right_cx = find_tab_centers(polygon)
     tab_overlap = 10.0
     tab_bottom = maxy - tab_overlap
-    tab_top = maxy + TAB_HEIGHT_MM
+    tab_top = maxy + SNAP_TAB_HEIGHT_MM
     tab_full_height = tab_top - tab_bottom
-    left_tab = make_rounded_tab(left_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM)
-    right_tab = make_rounded_tab(right_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM)
-    hole_y = maxy + TAB_HEIGHT_MM / 2.0
+    # Double-dome capsule shape: rounded top AND bottom
+    left_tab = make_rounded_tab(left_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM, double_dome=True)
+    right_tab = make_rounded_tab(right_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM, double_dome=True)
+    # String hole in upper portion of tab
+    hole_y = maxy + SNAP_TAB_HEIGHT_MM * 0.6
     left_hole = make_circle(left_cx, hole_y, hole_radius)
     right_hole = make_circle(right_cx, hole_y, hole_radius)
     # Full tab shape (including overlap)
