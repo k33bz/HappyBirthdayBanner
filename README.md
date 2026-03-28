@@ -32,9 +32,10 @@ Available as single-material STL or multi-material 3MF (body + tabs as separate 
 | ![B](previews/multi-color/B_banner.png) | ![I](previews/multi-color/I_banner.png) | ![R](previews/multi-color/R_banner.png) | ![T](previews/multi-color/T_banner.png) | ![H](previews/multi-color/H_banner.png) | ![D](previews/multi-color/D_banner.png) | ![A](previews/multi-color/A_banner.png) | ![Y](previews/multi-color/Y_banner.png) |
 
 ### Snap-fit Style
-Separate letter body and tab pieces joined with Mickey head peg-and-pocket joints.
-Body is 2.5mm thick (1mm face + 1.5mm pocket), tab has 1.5mm Mickey peg.
-Print body and tabs in different colors, press-fit together with optional glue:
+Separate letter body and tab pieces joined with a rabbet joint and Mickey head
+peg-and-pocket lock. Body is 3mm thick with a stepped cutout on the back. Tab has
+a matching stepped profile (3mm body, 1mm shelf) with a Mickey peg that locks into
+the pocket. Print body and tabs in different colors, press-fit together with glue:
 
 | H | A | P | P | Y |
 |---|---|---|---|---|
@@ -64,8 +65,8 @@ Goes between HAPPY and BIRTHDAY on the string:
 | Font | Waltograph UI (included in `fonts/`) |
 | Tab height | 15mm above letter + 10mm overlap into body |
 | Tab width | 14mm with semicircular dome top |
-| Snap-fit body depth | 2.5mm (1mm face + 1.5mm Mickey pocket) |
-| Snap-fit peg height | 1.5mm (7-8 layers at 0.2mm) |
+| Snap-fit body depth | 3.0mm (1mm face + 1mm pocket + 1mm cutout) |
+| Snap-fit tab | 3mm body, 1mm shelf in overlap + 1mm Mickey peg |
 | Mickey peg width | ~5mm (head) + ~3mm ears |
 | Pocket tolerance | 0.2mm oversize for clearance |
 | Vent hole | 1.5mm diameter pinhole in pocket back |
@@ -83,8 +84,9 @@ Goes between HAPPY and BIRTHDAY on the string:
 For the AD5X with IFS: import the 3MF files into Orca-FlashForge for automatic
 extruder assignment (e.g. letter body in color, tabs in clear/transparent).
 
-For snap-fit: print body and tabs separately in different colors, then press-fit
-the Mickey pegs into the pockets. Add a dab of glue for permanence.
+For snap-fit: print body and tabs separately in different colors. The tab's 1mm
+shelf sits in the letter's rabbet cutout, and the Mickey peg locks into the pocket.
+Add a dab of glue for permanence.
 
 ## Print Quantities
 
