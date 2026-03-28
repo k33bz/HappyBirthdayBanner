@@ -30,7 +30,18 @@ TAB_WIDTH_MM = 14.0
 TAB_HEIGHT_MM = 15.0
 TAB_CORNER_RADIUS_MM = 3.0
 FIXED_HOLE_Y_MM = 185.0  # All letters use same Y so banner hangs level
-FIXED_HOLE_Y_MM = 185.0  # All letters use same Y so banner hangs level
+# Snap-fit tab dimensions
+SNAP_BODY_DEPTH_MM = 2.5       # total letter thickness (1mm face + 1.5mm pocket)
+SNAP_FACE_DEPTH_MM = 1.0       # solid front face thickness
+SNAP_POCKET_DEPTH_MM = 1.5     # pocket depth on back
+SNAP_PEG_HEIGHT_MM = 1.5       # peg height (matches pocket depth)
+SNAP_TAB_BASE_DEPTH_MM = 1.0   # tab base thickness
+SNAP_TOLERANCE_MM = 0.2        # pocket oversized by this for clearance
+SNAP_VENT_DIAMETER_MM = 1.5    # vent hole in back of pocket
+MICKEY_HEAD_RADIUS_MM = 2.5    # main head circle radius
+MICKEY_EAR_RADIUS_MM = 1.5     # ear circle radius
+MICKEY_EAR_ANGLE_DEG = 40.0    # ear center angle from top of head
+MICKEY_SMOOTH_MM = 0.5         # buffer smoothing radius
 
 
 def get_glyph_outline(font_path, char):
@@ -156,6 +167,44 @@ def make_rounded_tab(cx, top_y, width, height, corner_radius):
     dome_pts.append((cx - half_w, rect_top))
     dome = Polygon(dome_pts)
     return rect.union(dome)
+
+
+def make_mickey_head(cx, cy, head_r=None, ear_r=None, ear_angle=None, smooth=None):
+    """Create a Mickey head silhouette (3 circles smoothed into one shape).
+    cx, cy: center of the head circle.
+    Returns a Shapely polygon."""
+    head_r = head_r or MICKEY_HEAD_RADIUS_MM
+    ear_r = ear_r or MICKEY_EAR_RADIUS_MM
+    ear_angle = ear_angle or MICKEY_EAR_ANGLE_DEG
+    smooth = smooth or MICKEY_SMOOTH_MM
+    # Head circle
+    head = make_circle(cx, cy, head_r, n_segments=64)
+    # Ear positions: angle from vertical axis at top of head
+    angle_rad = np.radians(ear_angle)
+    ear_dist = head_r + ear_r * 0.45  # overlap ears into head slightly
+    left_ear_cx = cx - ear_dist * np.sin(angle_rad)
+    left_ear_cy = cy + ear_dist * np.cos(angle_rad)
+    right_ear_cx = cx + ear_dist * np.sin(angle_rad)
+    right_ear_cy = cy + ear_dist * np.cos(angle_rad)
+    left_ear = make_circle(left_ear_cx, left_ear_cy, ear_r, n_segments=48)
+    right_ear = make_circle(right_ear_cx, right_ear_cy, ear_r, n_segments=48)
+    # Union and smooth the intersections
+    mickey = head.union(left_ear).union(right_ear)
+    mickey = mickey.buffer(smooth).buffer(-smooth)
+    return mickey
+
+
+def make_mickey_pocket(cx, cy, tolerance=None, **kwargs):
+    """Create a Mickey head shape oversized by tolerance for the pocket."""
+    tolerance = tolerance or SNAP_TOLERANCE_MM
+    mickey = make_mickey_head(cx, cy, **kwargs)
+    return mickey.buffer(tolerance)
+
+
+def make_vent_hole(cx, cy, diameter=None):
+    """Create a small vent hole polygon centered in the Mickey pocket."""
+    diameter = diameter or SNAP_VENT_DIAMETER_MM
+    return make_circle(cx, cy, diameter / 2.0, n_segments=16)
 
 
 def find_hole_positions(polygon):
@@ -360,6 +409,35 @@ def get_tab_geometry(polygon):
     return body, tabs_only
 
 
+def get_snap_tab_geometry(polygon):
+    """Return (body_polygon, tab_polygon, mickey_positions) for snap-fit variant.
+    Body = letter shape (no tabs attached, pockets will be cut during mesh generation).
+    Tab = dome-topped tab shapes (separate pieces with Mickey pegs).
+    mickey_positions = list of (cx, cy) for Mickey joint placement."""
+    hole_radius = HOLE_DIAMETER_MM / 2.0
+    minx, miny, maxx, maxy = polygon.bounds
+    left_cx, right_cx = find_tab_centers(polygon)
+    tab_overlap = 10.0
+    tab_bottom = maxy - tab_overlap
+    tab_top = maxy + TAB_HEIGHT_MM
+    tab_full_height = tab_top - tab_bottom
+    left_tab = make_rounded_tab(left_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM)
+    right_tab = make_rounded_tab(right_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM)
+    hole_y = maxy + TAB_HEIGHT_MM / 2.0
+    left_hole = make_circle(left_cx, hole_y, hole_radius)
+    right_hole = make_circle(right_cx, hole_y, hole_radius)
+    # Tab shapes KEEP the overlap region (pegs sit there)
+    tabs_full = left_tab.union(right_tab)
+    tabs_full = tabs_full.difference(left_hole).difference(right_hole).buffer(0)
+    # Body is the letter without tabs
+    body = polygon.buffer(0)
+    # Mickey joint positions: where tabs overlap into the letter body
+    # Place Mickey at the center of the overlap region on each tab
+    mickey_y = maxy - tab_overlap / 2.0  # midpoint of overlap
+    mickey_positions = [(left_cx, mickey_y), (right_cx, mickey_y)]
+    return body, tabs_full, mickey_positions
+
+
 def polygon_to_trimesh(polygon, depth):
     """Convert a shapely polygon to a trimesh mesh."""
     if polygon is None or polygon.is_empty:
@@ -378,6 +456,89 @@ def polygon_to_trimesh(polygon, depth):
                 meshes.append(m)
         except Exception:
             continue
+    if not meshes:
+        return None
+    return trimesh.util.concatenate(meshes)
+
+
+def _extrude_at_z(polygon, z_base, height):
+    """Extrude a polygon at a specific Z offset."""
+    mesh = polygon_to_trimesh(polygon, height)
+    if mesh is None:
+        return None
+    mesh.vertices[:, 2] += z_base
+    return mesh
+
+
+def build_snap_body_mesh(letter_poly, mickey_positions):
+    """Build the letter body mesh for snap-fit variant.
+    Full letter at 2.5mm, with 1.5mm Mickey pockets cut into the back,
+    and vent holes through the remaining 1mm face.
+
+    mickey_positions: list of (cx, cy) for each Mickey joint location.
+
+    Z layout (back=0, front=2.5):
+      Z=0 to Z=1.5: pocket area is empty (cut out)
+      Z=0 to Z=2.5: letter body (full depth where no pocket)
+      Vent hole: goes through Z=0 to Z=2.5 (tiny pinhole)
+    """
+    meshes = []
+    pocket_polys = []
+    vent_polys = []
+    for (cx, cy) in mickey_positions:
+        pocket_polys.append(make_mickey_pocket(cx, cy))
+        vent_polys.append(make_vent_hole(cx, cy))
+    # Combine all pockets and vents
+    all_pockets = pocket_polys[0]
+    for p in pocket_polys[1:]:
+        all_pockets = all_pockets.union(p)
+    all_vents = vent_polys[0]
+    for v in vent_polys[1:]:
+        all_vents = all_vents.union(v)
+    # Region with no pocket or vent: full depth (0 to 2.5)
+    letter_solid = letter_poly.difference(all_pockets).difference(all_vents).buffer(0)
+    m = _extrude_at_z(letter_solid, 0, SNAP_BODY_DEPTH_MM)
+    if m:
+        meshes.append(m)
+    # Pocket region (face layer only): pocket minus vents, Z=1.5 to 2.5
+    pocket_face = all_pockets.intersection(letter_poly).difference(all_vents).buffer(0)
+    m = _extrude_at_z(pocket_face, SNAP_POCKET_DEPTH_MM, SNAP_FACE_DEPTH_MM)
+    if m:
+        meshes.append(m)
+    # Pocket walls: ring between pocket and pocket+tolerance at Z=0 to 1.5
+    # (this closes the gap between the solid body and the face layer)
+    pocket_walls = all_pockets.intersection(letter_poly).difference(
+        all_pockets.buffer(-0.01)).difference(all_vents).buffer(0)
+    if not pocket_walls.is_empty:
+        m = _extrude_at_z(pocket_walls, 0, SNAP_BODY_DEPTH_MM)
+        if m:
+            meshes.append(m)
+    if not meshes:
+        return None
+    return trimesh.util.concatenate(meshes)
+
+
+def build_snap_tab_mesh(tab_poly, mickey_positions):
+    """Build the tab mesh for snap-fit variant.
+    Tab base at 1mm, with 1.5mm Mickey pegs rising from the back.
+
+    Z layout:
+      Z=0 to Z=1.0: tab base (flat)
+      Z=1.0 to Z=2.5: Mickey peg (only at peg locations)
+    """
+    meshes = []
+    # Tab base at full width
+    m = _extrude_at_z(tab_poly, 0, SNAP_TAB_BASE_DEPTH_MM)
+    if m:
+        meshes.append(m)
+    # Mickey pegs
+    for (cx, cy) in mickey_positions:
+        peg = make_mickey_head(cx, cy)
+        peg_on_tab = peg.intersection(tab_poly).buffer(0)
+        if not peg_on_tab.is_empty:
+            m = _extrude_at_z(peg_on_tab, SNAP_TAB_BASE_DEPTH_MM, SNAP_PEG_HEIGHT_MM)
+            if m:
+                meshes.append(m)
     if not meshes:
         return None
     return trimesh.util.concatenate(meshes)
@@ -448,6 +609,29 @@ def process_character_multimat(char, output_3mf_dir, output_split_dir):
     tb = tabs_poly.bounds if not tabs_poly.is_empty else body_poly.bounds
     total_h = max(b[3], tb[3]) - min(b[1], tb[1])
     print(f"  {char}: body + tabs -> {threemf_path}")
+    return True
+
+
+def process_character_snap(char, output_dir):
+    """Generate snap-fit tab variant: separate letter body (with pockets) and
+    tab (with Mickey pegs) as STL files."""
+    polygon = get_scaled_polygon(char)
+    if polygon is None:
+        return False
+    body_poly, tab_poly, mickey_positions = get_snap_tab_geometry(polygon)
+    # Build multi-depth meshes
+    body_mesh = build_snap_body_mesh(body_poly, mickey_positions)
+    tab_mesh = build_snap_tab_mesh(tab_poly, mickey_positions)
+    if body_mesh is None:
+        return False
+    # Export
+    body_stl = os.path.join(output_dir, f"{char}_snap_body.stl")
+    tab_stl = os.path.join(output_dir, f"{char}_snap_tab.stl")
+    body_mesh.export(body_stl, file_type="stl")
+    if tab_mesh is not None:
+        tab_mesh.export(tab_stl, file_type="stl")
+    b = body_poly.bounds
+    print(f"  {char}: snap body ({SNAP_BODY_DEPTH_MM}mm) + tab -> {output_dir}")
     return True
 
 
@@ -685,6 +869,27 @@ def main():
             render_preview_dual(body_stl, tabs_stl_mc, os.path.join(multi_preview_dir, f"{char}_banner.png"))
         print(f"  {char}: done")
     print("Previews saved to previews/")
+
+    # Style 4: Snap-fit tabs (separate body + tab with Mickey peg joints)
+    snap_dir = os.path.join(OUTPUT_DIR, "snap-fit")
+    os.makedirs(snap_dir, exist_ok=True)
+    snap_preview_dir = os.path.join(preview_base, "snap-fit")
+    os.makedirs(snap_preview_dir, exist_ok=True)
+    print(f"\nStyle 4: Snap-fit tabs (Mickey peg joints, {SNAP_BODY_DEPTH_MM}mm body)")
+    print("-" * 40)
+    for char in unique_chars:
+        success = process_character_snap(char, snap_dir)
+        if success:
+            # Render tab preview with depth coloring
+            tab_stl = os.path.join(snap_dir, f"{char}_snap_tab.stl")
+            body_stl = os.path.join(snap_dir, f"{char}_snap_body.stl")
+            if os.path.exists(body_stl) and os.path.exists(tab_stl):
+                render_preview_dual(body_stl, tab_stl,
+                    os.path.join(snap_preview_dir, f"{char}_banner.png"))
+    print(f"\n  Snap-fit STLs: {snap_dir}")
+    print(f"  Body: {SNAP_BODY_DEPTH_MM}mm thick ({SNAP_FACE_DEPTH_MM}mm face + {SNAP_POCKET_DEPTH_MM}mm pocket)")
+    print(f"  Tab: {SNAP_TAB_BASE_DEPTH_MM}mm base + {SNAP_PEG_HEIGHT_MM}mm Mickey peg")
+    print("  Press tab peg into body pocket, add glue for permanence")
 
 
 if __name__ == "__main__":

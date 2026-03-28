@@ -31,6 +31,19 @@ Available as single-material STL or multi-material 3MF (body + tabs as separate 
 |---|---|---|---|---|---|---|---|
 | ![B](previews/multi-color/B_banner.png) | ![I](previews/multi-color/I_banner.png) | ![R](previews/multi-color/R_banner.png) | ![T](previews/multi-color/T_banner.png) | ![H](previews/multi-color/H_banner.png) | ![D](previews/multi-color/D_banner.png) | ![A](previews/multi-color/A_banner.png) | ![Y](previews/multi-color/Y_banner.png) |
 
+### Snap-fit Style
+Separate letter body and tab pieces joined with Mickey head peg-and-pocket joints.
+Body is 2.5mm thick (1mm face + 1.5mm pocket), tab has 1.5mm Mickey peg.
+Print body and tabs in different colors, press-fit together with optional glue:
+
+| H | A | P | P | Y |
+|---|---|---|---|---|
+| ![H](previews/snap-fit/H_banner.png) | ![A](previews/snap-fit/A_banner.png) | ![P](previews/snap-fit/P_banner.png) | ![P](previews/snap-fit/P_banner.png) | ![Y](previews/snap-fit/Y_banner.png) |
+
+| B | I | R | T | H | D | A | Y |
+|---|---|---|---|---|---|---|---|
+| ![B](previews/snap-fit/B_banner.png) | ![I](previews/snap-fit/I_banner.png) | ![R](previews/snap-fit/R_banner.png) | ![T](previews/snap-fit/T_banner.png) | ![H](previews/snap-fit/H_banner.png) | ![D](previews/snap-fit/D_banner.png) | ![A](previews/snap-fit/A_banner.png) | ![Y](previews/snap-fit/Y_banner.png) |
+
 ### Castle Separator
 
 Goes between HAPPY and BIRTHDAY on the string:
@@ -51,6 +64,11 @@ Goes between HAPPY and BIRTHDAY on the string:
 | Font | Waltograph UI (included in `fonts/`) |
 | Tab height | 15mm above letter + 10mm overlap into body |
 | Tab width | 14mm with semicircular dome top |
+| Snap-fit body depth | 2.5mm (1mm face + 1.5mm Mickey pocket) |
+| Snap-fit peg height | 1.5mm (7-8 layers at 0.2mm) |
+| Mickey peg width | ~5mm (head) + ~3mm ears |
+| Pocket tolerance | 0.2mm oversize for clearance |
+| Vent hole | 1.5mm diameter pinhole in pocket back |
 
 ## File Formats
 
@@ -59,10 +77,14 @@ Goes between HAPPY and BIRTHDAY on the string:
 | `STL/holes/` | Single-material STL with holes in the letter body |
 | `STL/tabs/` | Single-material STL with tabs on top |
 | `STL/multi-color/` | Split STLs (`_body.stl` + `_tabs.stl`) for manual material assignment |
+| `STL/snap-fit/` | Separate body (`_snap_body.stl`) and tab (`_snap_tab.stl`) with Mickey peg joints |
 | `3MF/` | Multi-material 3MF with body and tabs as separate material groups |
 
 For the AD5X with IFS: import the 3MF files into Orca-FlashForge for automatic
 extruder assignment (e.g. letter body in color, tabs in clear/transparent).
+
+For snap-fit: print body and tabs separately in different colors, then press-fit
+the Mickey pegs into the pockets. Add a dab of glue for permanence.
 
 ## Print Quantities
 
