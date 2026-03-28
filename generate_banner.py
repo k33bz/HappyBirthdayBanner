@@ -30,7 +30,8 @@ TAB_WIDTH_MM = 14.0
 TAB_HEIGHT_MM = 15.0
 TAB_CORNER_RADIUS_MM = 3.0
 FIXED_HOLE_Y_MM = 185.0  # All letters use same Y so banner hangs level
-SNAP_TAB_HEIGHT_MM = 25.0      # taller tab for snap-fit (more room for Mickey)
+SNAP_TAB_HEIGHT_MM = 15.0      # tab height above letter (same as other styles)
+SNAP_TAB_OVERLAP_MM = 20.0     # how deep tab extends into letter (room for full Mickey)
 # Snap-fit tab dimensions (3mm total, rabbet joint profile)
 SNAP_BODY_DEPTH_MM = 3.0       # total letter/tab thickness
 SNAP_FACE_DEPTH_MM = 1.0       # solid front face thickness
@@ -444,28 +445,28 @@ def get_snap_tab_geometry(polygon):
     hole_radius = HOLE_DIAMETER_MM / 2.0
     minx, miny, maxx, maxy = polygon.bounds
     left_cx, right_cx = find_tab_centers(polygon)
-    tab_overlap = 10.0
-    tab_bottom = maxy - tab_overlap
+    tab_bottom = maxy - SNAP_TAB_OVERLAP_MM
     tab_top = maxy + SNAP_TAB_HEIGHT_MM
     tab_full_height = tab_top - tab_bottom
     # Double-dome capsule shape: rounded top AND bottom
     left_tab = make_rounded_tab(left_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM, double_dome=True)
     right_tab = make_rounded_tab(right_cx, tab_bottom, TAB_WIDTH_MM, tab_full_height, TAB_CORNER_RADIUS_MM, double_dome=True)
-    # String hole in upper portion of tab
-    hole_y = maxy + SNAP_TAB_HEIGHT_MM * 0.6
+    # String hole in upper portion of tab (above the letter)
+    hole_y = maxy + SNAP_TAB_HEIGHT_MM / 2.0
     left_hole = make_circle(left_cx, hole_y, hole_radius)
     right_hole = make_circle(right_cx, hole_y, hole_radius)
     # Full tab shape (including overlap)
     tabs_full = left_tab.union(right_tab)
     tabs_full = tabs_full.difference(left_hole).difference(right_hole).buffer(0)
     # Overlap region: where tabs intersect the letter body
-    tab_overlap = tabs_full.intersection(polygon).buffer(0)
+    tab_overlap_poly = tabs_full.intersection(polygon).buffer(0)
     # Body is the letter
     body = polygon.buffer(0)
-    # Mickey positions at center of overlap
-    mickey_y = maxy - 10.0 / 2.0  # midpoint of 10mm overlap
+    # Mickey positions: place in lower half of overlap for widest letter material
+    # and full Mickey clearance from the tab bottom dome
+    mickey_y = maxy - SNAP_TAB_OVERLAP_MM * 0.65
     mickey_positions = [(left_cx, mickey_y), (right_cx, mickey_y)]
-    return body, tabs_full, tab_overlap, mickey_positions
+    return body, tabs_full, tab_overlap_poly, mickey_positions
 
 
 def polygon_to_trimesh(polygon, depth):
