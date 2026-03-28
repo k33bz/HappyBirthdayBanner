@@ -504,11 +504,11 @@ def _extrude_at_z(polygon, z_base, height):
 def build_snap_body_mesh(letter_poly, tab_overlap_poly, mickey_positions):
     """Build the letter body mesh for snap-fit variant with rabbet joint.
 
-    Z layout (front=0, back=3.0):
+    Z layout (back/build plate=0, front=3.0):
       Z=0 to Z=3.0: full letter body (where no overlap or pocket)
-      Z=0 to Z=2.0: letter under tab overlap (1mm cutout removed from back)
-      Z=0 to Z=1.0: letter under Mickey pocket (face only, pocket+cutout removed)
-      Vent hole: pinhole through Z=0 to Z=1.0 (through face layer)
+      Z=1.0 to Z=3.0: cutout region (1mm cutout at Z=0, tab shelf sits here)
+      Z=2.0 to Z=3.0: pocket region (face only, pocket+cutout below)
+      Vent hole: pinhole through face (Z=2.0 to Z=3.0)
 
     letter_poly: full letter shape
     tab_overlap_poly: area where tab overlaps onto the letter
@@ -533,15 +533,16 @@ def build_snap_body_mesh(letter_poly, tab_overlap_poly, mickey_positions):
     m = _extrude_at_z(solid_region, 0, SNAP_BODY_DEPTH_MM)
     if m:
         meshes.append(m)
-    # 2. Cutout region: overlap area minus pocket -> 2mm (1mm cutout from back)
+    # 2. Cutout region: overlap minus pocket -> Z=1.0 to 3.0 (cutout at Z=0-1.0)
     cutout_region = overlap_in_letter.difference(all_pockets).difference(all_vents).buffer(0)
     cutout_height = SNAP_FACE_DEPTH_MM + SNAP_POCKET_DEPTH_MM  # 2mm
-    m = _extrude_at_z(cutout_region, 0, cutout_height)
+    m = _extrude_at_z(cutout_region, SNAP_CUTOUT_DEPTH_MM, cutout_height)
     if m:
         meshes.append(m)
-    # 3. Pocket region: Mickey pocket area -> 1mm face only
+    # 3. Pocket region: Mickey pocket area -> Z=2.0 to 3.0 (face only, pocket at Z=0-2.0)
     pocket_region = all_pockets.intersection(overlap_in_letter).difference(all_vents).buffer(0)
-    m = _extrude_at_z(pocket_region, 0, SNAP_FACE_DEPTH_MM)
+    face_z = SNAP_CUTOUT_DEPTH_MM + SNAP_POCKET_DEPTH_MM  # 2.0
+    m = _extrude_at_z(pocket_region, face_z, SNAP_FACE_DEPTH_MM)
     if m:
         meshes.append(m)
     if not meshes:
@@ -552,10 +553,10 @@ def build_snap_body_mesh(letter_poly, tab_overlap_poly, mickey_positions):
 def build_snap_tab_mesh(tab_poly, tab_overlap_poly, mickey_positions):
     """Build the tab mesh for snap-fit variant with rabbet joint profile.
 
-    Z layout (front=0, back=3.0):
-      Above letter (no overlap): full 3mm
-      Overlap region: 1mm shelf (Z=0 to Z=1.0) sits in letter's 1mm cutout
-      Mickey peg: 1mm tall (Z=1.0 to Z=2.0) drops into letter's 1mm pocket
+    Z layout (back/build plate=0, front=3.0):
+      Above letter (no overlap): full 3mm (Z=0 to 3.0)
+      Overlap region: 1mm shelf at top (Z=2.0 to 3.0), sits in letter's cutout at Z=0-1.0
+      Mickey peg: 1mm tall (Z=1.0 to 2.0), drops into letter's pocket at Z=1.0-2.0
 
     tab_poly: full tab shape (includes overlap region)
     tab_overlap_poly: just the overlap area where tab meets the letter
@@ -568,18 +569,20 @@ def build_snap_tab_mesh(tab_poly, tab_overlap_poly, mickey_positions):
         m = _extrude_at_z(tab_above, 0, SNAP_BODY_DEPTH_MM)
         if m:
             meshes.append(m)
-    # Overlap region: 1mm shelf
+    # Overlap region: 1mm shelf at top (Z=2.0 to 3.0)
     overlap_region = tab_overlap_poly.intersection(tab_poly).buffer(0)
+    shelf_z = SNAP_BODY_DEPTH_MM - SNAP_SHELF_DEPTH_MM  # 2.0
     if not overlap_region.is_empty:
-        m = _extrude_at_z(overlap_region, 0, SNAP_SHELF_DEPTH_MM)
+        m = _extrude_at_z(overlap_region, shelf_z, SNAP_SHELF_DEPTH_MM)
         if m:
             meshes.append(m)
-    # Mickey pegs on the shelf: 1mm tall, starting at Z=1.0
+    # Mickey pegs below the shelf: 1mm tall (Z=1.0 to 2.0)
+    peg_z = shelf_z - SNAP_PEG_HEIGHT_MM  # 1.0
     for (cx, cy) in mickey_positions:
         peg = make_mickey_head(cx, cy)
         peg_on_overlap = peg.intersection(overlap_region).buffer(0)
         if not peg_on_overlap.is_empty:
-            m = _extrude_at_z(peg_on_overlap, SNAP_SHELF_DEPTH_MM, SNAP_PEG_HEIGHT_MM)
+            m = _extrude_at_z(peg_on_overlap, peg_z, SNAP_PEG_HEIGHT_MM)
             if m:
                 meshes.append(m)
     if not meshes:
