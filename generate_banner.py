@@ -508,7 +508,7 @@ def build_snap_body_mesh(letter_poly, tab_overlap_poly, mickey_positions):
       Z=0 to Z=3.0: full letter body (where no overlap or pocket)
       Z=1.0 to Z=3.0: cutout region (1mm cutout at Z=0, tab shelf sits here)
       Z=2.0 to Z=3.0: pocket region (face only, pocket+cutout below)
-      Vent hole: pinhole through face (Z=2.0 to Z=3.0)
+      No vent holes in letter - vents are on the tab instead.
 
     letter_poly: full letter shape
     tab_overlap_poly: area where tab overlaps onto the letter
@@ -516,31 +516,26 @@ def build_snap_body_mesh(letter_poly, tab_overlap_poly, mickey_positions):
     """
     meshes = []
     pocket_polys = []
-    vent_polys = []
     for (cx, cy) in mickey_positions:
         pocket_polys.append(make_mickey_pocket(cx, cy))
-        vent_polys.append(make_vent_hole(cx, cy))
     all_pockets = pocket_polys[0]
     for p in pocket_polys[1:]:
         all_pockets = all_pockets.union(p)
-    all_vents = vent_polys[0]
-    for v in vent_polys[1:]:
-        all_vents = all_vents.union(v)
     # Overlap region within the letter
     overlap_in_letter = tab_overlap_poly.intersection(letter_poly).buffer(0)
-    # 1. Solid region: no overlap, no pocket, no vent -> full 3mm
-    solid_region = letter_poly.difference(overlap_in_letter).difference(all_vents).buffer(0)
+    # 1. Solid region: no overlap, no pocket -> full 3mm
+    solid_region = letter_poly.difference(overlap_in_letter).buffer(0)
     m = _extrude_at_z(solid_region, 0, SNAP_BODY_DEPTH_MM)
     if m:
         meshes.append(m)
     # 2. Cutout region: overlap minus pocket -> Z=1.0 to 3.0 (cutout at Z=0-1.0)
-    cutout_region = overlap_in_letter.difference(all_pockets).difference(all_vents).buffer(0)
+    cutout_region = overlap_in_letter.difference(all_pockets).buffer(0)
     cutout_height = SNAP_FACE_DEPTH_MM + SNAP_POCKET_DEPTH_MM  # 2mm
     m = _extrude_at_z(cutout_region, SNAP_CUTOUT_DEPTH_MM, cutout_height)
     if m:
         meshes.append(m)
     # 3. Pocket region: Mickey pocket area -> Z=2.0 to 3.0 (face only, pocket at Z=0-2.0)
-    pocket_region = all_pockets.intersection(overlap_in_letter).difference(all_vents).buffer(0)
+    pocket_region = all_pockets.intersection(overlap_in_letter).buffer(0)
     face_z = SNAP_CUTOUT_DEPTH_MM + SNAP_POCKET_DEPTH_MM  # 2.0
     m = _extrude_at_z(pocket_region, face_z, SNAP_FACE_DEPTH_MM)
     if m:
@@ -557,30 +552,40 @@ def build_snap_tab_mesh(tab_poly, tab_overlap_poly, mickey_positions):
       Above letter (no overlap): full 3mm (Z=0 to 3.0)
       Overlap region: 1mm shelf at top (Z=2.0 to 3.0), sits in letter's cutout at Z=0-1.0
       Mickey peg: 1mm tall (Z=1.0 to 2.0), drops into letter's pocket at Z=1.0-2.0
+      Vent hole: pinhole through shelf+peg center (Z=1.0 to 3.0) for air escape
 
     tab_poly: full tab shape (includes overlap region)
     tab_overlap_poly: just the overlap area where tab meets the letter
     mickey_positions: list of (cx, cy) for Mickey peg placement
     """
     meshes = []
+    # Collect vent holes
+    vent_polys = []
+    for (cx, cy) in mickey_positions:
+        vent_polys.append(make_vent_hole(cx, cy))
+    all_vents = vent_polys[0]
+    for v in vent_polys[1:]:
+        all_vents = all_vents.union(v)
     # Region above the letter (no overlap): full 3mm thick
     tab_above = tab_poly.difference(tab_overlap_poly).buffer(0)
     if not tab_above.is_empty:
         m = _extrude_at_z(tab_above, 0, SNAP_BODY_DEPTH_MM)
         if m:
             meshes.append(m)
-    # Overlap region: 1mm shelf at top (Z=2.0 to 3.0)
+    # Overlap region: 1mm shelf at top (Z=2.0 to 3.0), with vent holes
     overlap_region = tab_overlap_poly.intersection(tab_poly).buffer(0)
     shelf_z = SNAP_BODY_DEPTH_MM - SNAP_SHELF_DEPTH_MM  # 2.0
     if not overlap_region.is_empty:
-        m = _extrude_at_z(overlap_region, shelf_z, SNAP_SHELF_DEPTH_MM)
+        shelf_with_vent = overlap_region.difference(all_vents).buffer(0)
+        m = _extrude_at_z(shelf_with_vent, shelf_z, SNAP_SHELF_DEPTH_MM)
         if m:
             meshes.append(m)
-    # Mickey pegs below the shelf: 1mm tall (Z=1.0 to 2.0)
+    # Mickey pegs below the shelf: 1mm tall (Z=1.0 to 2.0), with vent holes
     peg_z = shelf_z - SNAP_PEG_HEIGHT_MM  # 1.0
     for (cx, cy) in mickey_positions:
         peg = make_mickey_head(cx, cy)
-        peg_on_overlap = peg.intersection(overlap_region).buffer(0)
+        vent = make_vent_hole(cx, cy)
+        peg_on_overlap = peg.intersection(overlap_region).difference(vent).buffer(0)
         if not peg_on_overlap.is_empty:
             m = _extrude_at_z(peg_on_overlap, peg_z, SNAP_PEG_HEIGHT_MM)
             if m:
